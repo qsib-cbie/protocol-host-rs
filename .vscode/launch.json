@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'vr_actuators_cli'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=vr_actuators_cli",
+                    "--package=vr_actuators_cli"
+                ],
+                "filter": {
+                    "name": "vr_actuators_cli",
+                    "kind": "bin"
+                }
+            },
+            "args": ["-vvv", "command"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'vr_actuators_cli'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=vr_actuators_cli",
+                    "--package=vr_actuators_cli"
+                ],
+                "filter": {
+                    "name": "vr_actuators_cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

@@ -10,4 +10,8 @@ edition = "2018"
 libusb = "0.3"
 clap = "2.33.1"
 log = "0.4.8"
-simple_logger = "1.6.0"
+simple_logger = "1.6.0" 
+zmq = "0.9"
+
+[profile.release]
+lto = true
