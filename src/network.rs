@@ -7,36 +7,61 @@ pub struct NetworkContext {
     pub hostname: String,
     pub port: i16,
 
-    ctx: zmq::Context,
-    socket: Option<zmq::Socket>,
+    _ctx: zmq::Context,
+    socket: zmq::Socket,
 }
 
 impl NetworkContext {
-    pub fn get_bound_socket(& self) -> Result<zmq::Socket, std::io::Error> {
-        let socket = self.ctx.socket(zmq::REP)?;
-        log::trace!("Created socket");
 
-        let addr = format!("{}://{}:{}", self.protocol, self.hostname, self.port.to_string());
-        socket.bind(addr.as_str())?;
-        log::info!("Bound socket on {}", addr);
-
-        Ok(socket)
-    }
-
-    pub fn get_connected_socket(& mut self) -> Result<&zmq::Socket, std::io::Error> {
-        if self.socket.is_none() {
-            let socket = self.ctx.socket(zmq::REQ)?;
-            log::trace!("Created socket");
-
-            let addr = format!("{}://{}:{}", self.protocol, self.hostname, self.port.to_string());
-            socket.connect(addr.as_str())?;
-            log::info!("Connected socket to {}", addr);
-
-            self.socket = Some(socket);
+    pub fn new(protocol: &str, hostname: &str, port: i16, socket_type: zmq::SocketType) -> Result<NetworkContext, Box<dyn std::error::Error>> {
+        let ctx = Self::_new(protocol, hostname, port, socket_type);
+        match ctx {
+            Ok(ctx) => Ok(ctx),
+            Err(err) => Err(err.into()),
         }
+    }
+    
+    pub fn _new(protocol: &str, hostname: &str, port: i16, socket_type: zmq::SocketType) -> Result<NetworkContext, zmq::Error> {
+        let ctx = zmq::Context::new();
 
-        let socket_ref = self.socket.as_ref().unwrap();
-        Ok(socket_ref)
+        match socket_type {
+            zmq::REP => {
+                let socket = ctx.socket(zmq::REP)?;
+                log::trace!("Created socket");
+
+                let addr = format!("{}://{}:{}", protocol, hostname, port.to_string());
+                socket.bind(addr.as_str())?;
+                log::info!("Bound socket on {}", addr);
+
+                Ok(NetworkContext {
+                    protocol: String::from(protocol),
+                    hostname: String::from(hostname),
+                    port,
+                    _ctx: ctx,
+                    socket
+                })
+            },
+            zmq::REQ => {
+                let socket = ctx.socket(zmq::REQ)?;
+                log::trace!("Created socket");
+
+                let addr = format!("{}://{}:{}", protocol, hostname, port.to_string());
+                socket.connect(addr.as_str())?;
+                log::info!("Connected socket to {}", addr);
+
+                Ok(NetworkContext {
+                    protocol: String::from(protocol),
+                    hostname: String::from(hostname),
+                    port,
+                    _ctx: ctx,
+                    socket
+                })
+            },
+            _ => {
+                log::error!("Unsupported socket type: {:#?}", socket_type);
+                Err(zmq::Error::EINVAL)
+            }
+        }
     }
 }
 
@@ -50,125 +75,181 @@ pub struct Client {
 }
 
 impl Server {
-    pub fn new(protocol: String, hostname: String, port: i16) -> Server {
-        Server {
-            net_ctx: NetworkContext {
-                protocol,
-                hostname,
-                port,
-                ctx: zmq::Context::new(),
-                socket: None,
-            },
+    pub fn new(protocol: &str, hostname: &str, port: i16) -> Result<Server, Box<dyn std::error::Error>> {
+        Ok(Server {
+            net_ctx: NetworkContext::new(protocol, hostname, port, zmq::REP)?,
             fabrics: std::vec::Vec::new(),
-        }
+        })
     }
 
-    pub fn serve(& self) -> Result<(), std::io::Error> {
-        let socket = self.net_ctx.get_bound_socket()?;
-        let mut message = zmq::Message::new();
+    pub fn serve(&mut self) -> Result<(), std::io::Error> {
         loop {
-            socket.recv(&mut message, 0)?;
-            let message = message.as_str().unwrap();
-            log::debug!("Received: {}", message);
+            // 1. Read the type of the next message
+            let mut message = zmq::Message::new();
+            self.net_ctx.socket.recv(&mut message, 0)?;
+            let command_info_message = message.as_str().unwrap();
+            log::trace!("Received: {}", command_info_message);
+            let command_info_type = command_info_message.parse();
 
-            // TODO: Ser De for Json
+            // 1.5 Send confirmation of command_info_type received
+            self.net_ctx.socket.send("", 0)?;
 
-            // TODO: Handle Command
+            // 2. Read the next message
+            let mut message = zmq::Message::new();
+            self.net_ctx.socket.recv(&mut message, 0)?;
+            let command_message = message.as_str().unwrap();
 
-            socket.send(message.as_bytes(), 0)?;
-            log::debug!("Sent: {}", message);
+            match command_info_type {
+                Ok(info_type) => {
+                    // 3. Handle Command by delegating to command implementations
+                    let command = Command::from_envelope(info_type, command_message);
+                    command?.info.visit(self);
+
+                    let okay = Box::new(Okay { message: Some("OK".to_string()) });
+
+                    // 3. Send the message type
+                    let okay_type = okay.type_id().to_string();
+                    self.net_ctx.socket.send(okay_type.as_bytes(), 0)?;
+                    log::trace!("Sent: {}", okay_type);
+
+                    // 3.5 Recv the confirmation of the okay_type
+                    self.net_ctx.socket.recv(&mut message, 0)?;
+
+                    // 4. Send the not okay
+                    let okay_message = okay.to_string()?;
+                    self.net_ctx.socket.send(okay_message.as_bytes(), 0)?;
+                    log::trace!("Sent: {}", okay_message);
+                },
+                Err(_) => {
+                    let not_okay = Box::new(NotOkay {
+                        message: format!("invalid 'command_info_type': {}", command_info_message)
+                    });
+
+                    // 3. Send the message type
+                    let not_okay_type = not_okay.type_id().to_string();
+                    self.net_ctx.socket.send(not_okay_type.as_bytes(), 0)?;
+                    log::debug!("Sent: {}", not_okay_type);
+
+                    // 3.5 Recv the confirmation of the not_okay_type
+                    self.net_ctx.socket.recv(&mut message, 0)?;
+
+                    // 4. Send the not okay
+                    let not_okay_message = not_okay.to_string()?;
+                    self.net_ctx.socket.send(not_okay_message.as_bytes(), 0)?;
+                    log::debug!("Sent: {}", not_okay_message);
+                }
+            }
         }
     }
 }
 
 impl Client {
-    pub fn new(protocol: String, hostname: String, port: i16) -> Client {
-        Client {
-            net_ctx: NetworkContext {
-                protocol,
-                hostname,
-                port,
-                ctx: zmq::Context::new(),
-                socket: None,
+    pub fn new(protocol: &str, hostname: &str, port: i16) -> Result<Client, Box<dyn std::error::Error>> {
+        Ok(Client {
+            net_ctx: NetworkContext::new(protocol, hostname, port, zmq::REQ)?,
+        })
+    }
+
+    pub fn request(& mut self, command: Command) -> Result<(), std::io::Error> {
+        // 1. Send the type of request
+        let command_info = command.info;
+        let message =  command_info.type_id().to_string();
+        self.net_ctx.socket.send(message.as_bytes(), 0)?;
+        log::trace!("Sent: {}", message);
+
+        // 1.5 Receive confirmation of command_info_type sent
+        let mut message = zmq::Message::new();
+        self.net_ctx.socket.recv(&mut message, 0)?;
+
+        // 2. Send the request
+        let message = command_info.to_string().expect("Failed to serialize command");
+        self.net_ctx.socket.send(message.as_bytes(), 0)?;
+        log::debug!("Sent: {}", message);
+
+        // 3. Receive the command request type
+        let mut message = zmq::Message::new();
+        self.net_ctx.socket.recv(&mut message, 0)?;
+        let response_type = message.as_str().unwrap();
+        log::trace!("Received: {}", response_type);
+
+        // 3.5 Send confirmation
+        self.net_ctx.socket.send("", 0)?;
+
+        // 4. Receive the command response
+        let mut message = zmq::Message::new();
+        self.net_ctx.socket.recv(&mut message, 0)?;
+        log::debug!("Received: {}", message.as_str().unwrap());
+
+        match response_type.parse() {
+            Ok(1) => {
+                Okay::from_string(message.as_str().unwrap())?;
+                Ok(())
+            },
+            _ => {
+                Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected response from server: {:?}", message)))
             }
         }
     }
 
-    pub fn request(& mut self, command: Command) -> Result<(), std::io::Error> {
-        let socket = self.net_ctx.get_connected_socket()?;
-
-        let message = command.info.to_string().expect("Failed to serialize command");
-        socket.send(message.as_bytes(), 0)?;
-        log::debug!("Sent: {}", message);
-
-        let mut message = zmq::Message::new();
-        socket.recv(&mut message, 0)?;
-        log::debug!("Received: {}", message.as_str().unwrap());
-
-        
-        Ok(())
-
-        // if message.as_str().unwrap() == "OK" {
-        //     Ok(())
-        // } else {
-        //     Err(std::io::Error::new(std::io::ErrorKind::Other, "NOT OK"))
-        // }
-    }
-
-    pub fn parse_command(& self, command: serde_json::Value) -> Option<Command> {
+    pub fn parse_command(& self, command: serde_json::Value) -> Result<Command, std::io::Error> {
         let fields = command.as_object().expect("Commands must have fields");
-        let command_name = fields.get("command").expect("'command' missing");
-        if command_name == "add-fabric" {
-            let fabric_name = fields.get("fabric-name").expect("'fabric-name' missing");
-            let fabric_name = fabric_name.as_str().expect("invalid fabric-name");
-            let fabric_name = String::from(fabric_name);
-            let conn_type= fields.get("conn-type").expect("'conn-type' missing");
-            let conn_type = conn_type.as_str().expect("invalid conn-type");
-            let conn_type = String::from(conn_type);
-
-
-            Some(
-                Command::new(
-                Box::new(AddFabricInfo {
-                    fabric_name,
-                    conn_type,
-                }))
-            )
-        } else {
-            log::error!("Unexpected command: {:#?}", command);
-            None 
+        let command_type = fields.get("command_type").expect("'command_type' missing");
+        let command = fields.get("command").expect("'command' missing");
+        let ser_command = serde_json::to_string(command).expect("Failed to reserialize 'command'");
+        let ser_str = ser_command.as_str();
+        match command_type.as_str().unwrap() {
+            "Okay" => Ok(Command { info: Okay::from_string(ser_str)?, }),
+            "NotOkay" => Ok(Command { info: NotOkay::from_string(ser_str)?, }),
+            "AddFabric" => Ok(Command { info: AddFabric::from_string(ser_str)?, }),
+            "RemoveFabric" => Ok(Command { info: RemoveFabric::from_string(ser_str)?, }),
+            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "Bad 'command' object. Check command definitions")),
         }
     }
 }
 
 pub struct Command {
-    info: Box<dyn CommandInfo>
+    info: Box<dyn CommandInfo>,
 }
 
 impl Command {
-    pub fn new(info: Box<dyn CommandInfo>) -> Command {
-        Command {
-            info
+    pub fn from_envelope(info_type: i16, command_info: & str) -> Result<Command, std::io::Error> {
+        match info_type {
+            0 => Err(std::io::Error::new(std::io::ErrorKind::Other, "Unexpected envelope info_type: 0")),
+            1 => Ok(Command { info: Okay::from_string(command_info)?, }),
+            2 => Ok(Command { info: NotOkay::from_string(command_info)?, }),
+            3 => Ok(Command { info: AddFabric::from_string(command_info)?, }),
+            4 => Ok(Command { info: RemoveFabric::from_string(command_info)?, }),
+            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected envelope info_type: {}", info_type))),
         }
     }
 }
 
-pub trait CommandInfo {
-    fn type_id() -> std::any::TypeId where Self: Sized;
+pub trait CommandInfo: Visitor {
+    fn type_id(self: &Self) -> i16;
 
-    fn to_string(self: Box<Self>) -> Option<String>;
+    fn to_string(self: &Self) -> Result<String, serde_json::error::Error>;
 
-    fn from_string(ser_self: String) -> Box<Self> where Self: Sized;
+    fn from_string(ser_self: &str) -> Result<Box<dyn CommandInfo>, serde_json::error::Error> where Self: Sized;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct AddFabricInfo {
+pub struct Okay {
+    pub message: Option<String>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NotOkay {
+    pub message: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AddFabric {
     pub fabric_name: String,
     pub conn_type: String, 
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RemoveFabricInfo {
+pub struct RemoveFabric {
     pub fabric_name: String,
     pub conn_type: String, 
 }
@@ -176,27 +257,64 @@ pub struct RemoveFabricInfo {
 macro_rules! impl_command_info {
     ($($t:ty),+) => {
         $(impl CommandInfo for $t {
-            fn type_id() -> std::any::TypeId {
-                std::any::TypeId::of::<$t>()
-            }
-
-            fn to_string(self: Box<Self>) -> Option<String> {
-                match serde_json::to_string(self.as_ref()) {
-                    Ok(serialized_string) => {
-                        Some(serialized_string)
-                    },
-                    Err(_) => {
-                        log::error!("Failed to serialize: {:#?}", self);
-                        None
-                    }
+            fn type_id(self: &Self) -> i16 {
+                log::trace!("Choosing type_id enumeration for {}", std::any::type_name::<$t>());
+                match std::any::type_name::<$t>() {
+                    "vr_actuators_cli::network::Okay" => 1,
+                    "vr_actuators_cli::network::NotOkay" => 2,
+                    "vr_actuators_cli::network::AddFabric" => 3,
+                    "vr_actuators_cli::network::RemoveFabric" => 4,
+                    _ => 0
                 }
             }
 
-            fn from_string(ser_self: String) -> Box<Self> {
-                Box::new(serde_json::from_str(ser_self.as_str()).unwrap())
+            fn to_string(self: &Self) -> Result<String, serde_json::error::Error> {
+                serde_json::to_string(self)
+            }
+
+            fn from_string(ser_self: &str) -> Result<Box<dyn CommandInfo>, serde_json::error::Error> {
+                let de_self: $t = serde_json::from_str(ser_self)?;
+                Ok(Box::new(de_self))
             }
         })+
     }
 }
 
-impl_command_info!(AddFabricInfo, RemoveFabricInfo);
+impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric);
+
+pub trait Visitor {
+    fn visit(self: &Self, state: &mut Server);
+}
+
+impl Visitor for Okay {
+    fn visit(self: &Self, _: &mut Server) {
+        log::info!("Nothing to do for Okay command");
+    }
+}
+impl Visitor for NotOkay {
+    fn visit(self: &Self, _: &mut Server) {
+        log::info!("Nothing to do for NotOkay command");
+    }
+}
+
+impl Visitor for AddFabric {
+    fn visit(self: &Self, state: &mut Server) {
+        state.fabrics.push(vrp::Fabric::new(self.fabric_name.as_str()));
+        log::info!("Added new fabric to command for AddFabric command: {:#?}", state.fabrics);
+    }
+}
+
+impl Visitor for RemoveFabric {
+    fn visit(self: &Self, state: &mut Server) {
+        match state.fabrics.binary_search_by(|fabric| fabric.name.cmp(&self.fabric_name)) {
+            Ok(position) => {
+                state.fabrics.remove(position);
+                log::info!("Removed existing fabric to command for AddFabric command: {:#?}", state.fabrics);
+            },
+            Err(_) => {
+                log::info!("No existing fabric to remove for RemoveFabric command");
+            }
+        }
+    }
+}
+

@@ -86,8 +86,17 @@ fn main() -> Result<(), std::io::Error> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected a small integer for port");
 
-        let server = network::Server::new(protocol, hostname, port);
-        server.serve()?;
+        loop {
+            let mut server = network::Server::new(protocol.as_str(), hostname.as_str(), port).expect("Failed to initialize server");
+            match server.serve() {
+                Ok(_) => {
+                    log::info!("Finished serving with Ok result ... Restarting ...");
+                },
+                Err(err) => {
+                    log::error!("Encountered error: {}", err);
+                }
+            }
+        }
 
     } else if let Some(matches) = matches.subcommand_matches("command") {
         log::info!("Running command: {}", "command");
@@ -99,7 +108,7 @@ fn main() -> Result<(), std::io::Error> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected small integer for port");
 
-        let mut client = network::Client::new(protocol, hostname, port);
+        let mut client = network::Client::new(protocol.as_str(), hostname.as_str(), port).expect("Failed to initialize client");
 
         // Send each of the commands
         let commands = String::from(matches.value_of("commands").unwrap());
