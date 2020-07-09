@@ -1,0 +1,2 @@
+{ "command": "add-fabric", "fabric-name": "actuator-block-0", "conn-type": "NFC" }
+{ "command": "add-fabric", "fabric-name": "actuator-block-1", "conn-type": "BLE" }

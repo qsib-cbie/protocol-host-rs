@@ -7,10 +7,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libusb = "0.3"
 clap = "2.33.1"
+libusb = "0.3"
 log = "0.4.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 simple_logger = "1.6.0" 
+uuid = { version = "0.8", features = ["v4"] }
 zmq = "0.9"
 
 [profile.release]

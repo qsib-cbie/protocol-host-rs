@@ -1,4 +1,5 @@
 mod network;
+mod vrp;
 
 fn main() -> Result<(), std::io::Error> {
     // Define the acceptable user input behavior
@@ -54,12 +55,12 @@ fn main() -> Result<(), std::io::Error> {
                 .default_value("tcp")
                 .help("Sets ZMQ protocol for the server")
                 .takes_value(true))
-            .arg(clap::Arg::with_name("id")
-                .long("id")
-                .value_name("ID")
-                .default_value("0")
-                .help("Sets an id for the command")
-                .takes_value(true)))
+            .arg(clap::Arg::with_name("commands")
+                .required(true)
+                .value_name("COMMANDS_FILE")
+                .default_value("commands.txt")
+                .index(1)
+                .help("Sets the file that lists the commands to execute")))
         .get_matches();
 
     // Configure the logger before heading off to the rest of the functionality
@@ -98,9 +99,18 @@ fn main() -> Result<(), std::io::Error> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected small integer for port");
 
-        let client = network::Client::new(protocol, hostname, port);
-        client.request()?;
+        let mut client = network::Client::new(protocol, hostname, port);
 
+        // Send each of the commands
+        let commands = String::from(matches.value_of("commands").unwrap());
+        let file = std::fs::File::open(commands)?;
+        let reader = std::io::BufReader::new(file);
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<serde_json::Value>();
+        for command in stream {
+            log::trace!("Found command: {:#?}", command);
+            let parsed_command = client.parse_command(command?).expect("Failed to parse command");
+            client.request(parsed_command)?
+        }
     } else {
         log::error!("Unknown command. Exiting ...");
         std::process::exit(1);
