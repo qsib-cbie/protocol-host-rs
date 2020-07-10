@@ -6,6 +6,7 @@ This repo contains a Rust CLI for manipulating VR Actuators. This includes a dae
 
 - Rust for building the binary. https://rustup.rs
 - ZMQ for messaging. https://zeromq.org/download/
+- libusb for reader manipuation. https://libusb.info
 
 ## Running
 
