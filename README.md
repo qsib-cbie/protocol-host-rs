@@ -9,7 +9,6 @@ This repo contains a Rust CLI for manipulating VR Actuators. This includes a dae
 
 ## Running
 
-- Start the daemon. `cargo run -- start`
-- Send commands. `cargo run -- command 01234ABCDEF`
-- Shutdown the daemon. `cargo run -- stop`
+- Start the daemon in one session. `cargo run -- -vv start`
+- Send commands in another session. `cargo run -- -vv command`
 - See help for more info. `cargo run -- --help`
