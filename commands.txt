@@ -1,5 +1,1 @@
 { "command_type": "AddFabric", "command": { "fabric_name": "actuator-block-0", "conn_type": "NFC" } }
-{ "command_type": "AddFabric", "command": { "fabric_name": "actuator-block-1", "conn_type": "BLE" } }
-{ "command_type": "RemoveFabric", "command": { "fabric_name": "actuator-block-2", "conn_type": "BLE" } }
-{ "command_type": "RemoveFabric", "command": { "fabric_name": "actuator-block-1", "conn_type": "BLE" } }
-{ "command_type": "AddFabric", "command": { "fabric_name": "actuator-block-3", "conn_type": "NFC" } }

@@ -299,8 +299,16 @@ impl Visitor for NotOkay {
 
 impl Visitor for AddFabric {
     fn visit(self: &Self, state: &mut Server) {
-        state.fabrics.push(vrp::Fabric::new(self.fabric_name.as_str()));
-        log::info!("Added new fabric to command for AddFabric command: {:#?}", state.fabrics);
+        match vrp::Fabric::new(self.fabric_name.as_str()) {
+            Ok(fabric) => {
+                state.fabrics.push(fabric);
+                log::info!("Added new fabric to command for AddFabric command");
+                log::trace!("Active Fabrics: {:#?}", state.fabrics);
+            },
+            Err(err) => {
+                log::error!("Failed to create Fabric: {}", err);
+            }
+        }
     }
 }
 
@@ -309,7 +317,8 @@ impl Visitor for RemoveFabric {
         match state.fabrics.binary_search_by(|fabric| fabric.name.cmp(&self.fabric_name)) {
             Ok(position) => {
                 state.fabrics.remove(position);
-                log::info!("Removed existing fabric to command for AddFabric command: {:#?}", state.fabrics);
+                log::info!("Removed existing fabric to command for AddFabric command");
+                log::trace!("Active Fabrics:  {:#?}", state.fabrics);
             },
             Err(_) => {
                 log::info!("No existing fabric to remove for RemoveFabric command");
