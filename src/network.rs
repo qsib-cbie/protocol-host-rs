@@ -3,9 +3,7 @@
 use serde::{Serialize, Deserialize};
 
 pub struct NetworkContext {
-    pub protocol: String,
-    pub hostname: String,
-    pub port: i16,
+    pub endpoint: String, 
 
     _ctx: zmq::Context,
     socket: zmq::Socket,
@@ -14,14 +12,23 @@ pub struct NetworkContext {
 impl NetworkContext {
 
     pub fn new(protocol: &str, hostname: &str, port: i16, socket_type: zmq::SocketType) -> Result<NetworkContext, Box<dyn std::error::Error>> {
-        let ctx = Self::_new(protocol, hostname, port, socket_type);
+        let ctx = Self::_new(String::from(format!("{}://{}:{}", protocol, hostname, port.to_string())), socket_type);
+        match ctx {
+            Ok(ctx) => Ok(ctx),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn from_endpoint(endpoint: String, socket_type: zmq::SocketType) -> Result<NetworkContext, Box<dyn std::error::Error>> {
+        let ctx = Self::_new(endpoint, socket_type);
         match ctx {
             Ok(ctx) => Ok(ctx),
             Err(err) => Err(err.into()),
         }
     }
     
-    pub fn _new(protocol: &str, hostname: &str, port: i16, socket_type: zmq::SocketType) -> Result<NetworkContext, zmq::Error> {
+    pub fn _new(endpoint: String, socket_type: zmq::SocketType) -> Result<NetworkContext, zmq::Error> {
         let ctx = zmq::Context::new();
 
         match socket_type {
@@ -29,14 +36,11 @@ impl NetworkContext {
                 let socket = ctx.socket(zmq::REP)?;
                 log::trace!("Created socket");
 
-                let addr = format!("{}://{}:{}", protocol, hostname, port.to_string());
-                socket.bind(addr.as_str())?;
-                log::info!("Bound socket on {}", addr);
+                socket.bind(endpoint.as_str())?;
+                log::info!("Bound socket on {}", endpoint);
 
                 Ok(NetworkContext {
-                    protocol: String::from(protocol),
-                    hostname: String::from(hostname),
-                    port,
+                    endpoint,
                     _ctx: ctx,
                     socket
                 })
@@ -45,14 +49,11 @@ impl NetworkContext {
                 let socket = ctx.socket(zmq::REQ)?;
                 log::trace!("Created socket");
 
-                let addr = format!("{}://{}:{}", protocol, hostname, port.to_string());
-                socket.connect(addr.as_str())?;
-                log::info!("Connected socket to {}", addr);
+                socket.connect(endpoint.as_str())?;
+                log::info!("Connected to {}", endpoint);
 
                 Ok(NetworkContext {
-                    protocol: String::from(protocol),
-                    hostname: String::from(hostname),
-                    port,
+                    endpoint,
                     _ctx: ctx,
                     socket
                 })
@@ -68,6 +69,7 @@ impl NetworkContext {
 pub struct Server {
     net_ctx: NetworkContext,
     fabrics: std::vec::Vec<vrp::Fabric>,
+    shutting_down: bool,
 }
 
 pub struct Client {
@@ -79,10 +81,12 @@ impl Server {
         Ok(Server {
             net_ctx: NetworkContext::new(protocol, hostname, port, zmq::REP)?,
             fabrics: std::vec::Vec::new(),
+            shutting_down: false
         })
     }
 
-    pub fn serve(&mut self) -> Result<(), std::io::Error> {
+    pub fn serve(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Beginning serve() loop ...");
         loop {
             // 1. Read the type of the next message
             let mut message = zmq::Message::new();
@@ -103,7 +107,7 @@ impl Server {
                 Ok(info_type) => {
                     // 3. Handle Command by delegating to command implementations
                     let command = Command::from_envelope(info_type, command_message);
-                    command?.info.visit(self);
+                    let result = command?.info.visit(self);
 
                     let okay = Box::new(Okay { message: Some("OK".to_string()) });
 
@@ -119,6 +123,17 @@ impl Server {
                     let okay_message = okay.to_string()?;
                     self.net_ctx.socket.send(okay_message.as_bytes(), 0)?;
                     log::trace!("Sent: {}", okay_message);
+
+                    // 5. Maybe finish
+                    if result.is_err() {
+                        let err = result.unwrap_err();
+                        log::error!("Leaving serve() due to err: {}", &err);
+                        return Err(err);
+                    }
+                    if self.shutting_down {
+                        log::info!("Leaving serve() gracefully ...");
+                        return Ok(());
+                    }
                 },
                 Err(_) => {
                     let not_okay = Box::new(NotOkay {
@@ -141,12 +156,24 @@ impl Server {
             }
         }
     }
+
+    #[allow(dead_code)]
+    pub fn get_last_endpoint(self: &Self) -> String {
+        self.net_ctx.socket.get_last_endpoint().unwrap().unwrap()
+    }
 }
 
 impl Client {
     pub fn new(protocol: &str, hostname: &str, port: i16) -> Result<Client, Box<dyn std::error::Error>> {
         Ok(Client {
             net_ctx: NetworkContext::new(protocol, hostname, port, zmq::REQ)?,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn from_endpoint(endpoint: String) -> Result<Client, Box<dyn std::error::Error>> {
+        Ok(Client {
+            net_ctx: NetworkContext::from_endpoint(endpoint, zmq::REQ)?,
         })
     }
 
@@ -202,6 +229,7 @@ impl Client {
             "NotOkay" => Ok(Command { info: NotOkay::from_string(ser_str)?, }),
             "AddFabric" => Ok(Command { info: AddFabric::from_string(ser_str)?, }),
             "RemoveFabric" => Ok(Command { info: RemoveFabric::from_string(ser_str)?, }),
+            "Stop" => Ok(Command { info: Stop::from_string(ser_str)?, }),
             _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "Bad 'command' object. Check command definitions")),
         }
     }
@@ -219,6 +247,7 @@ impl Command {
             2 => Ok(Command { info: NotOkay::from_string(command_info)?, }),
             3 => Ok(Command { info: AddFabric::from_string(command_info)?, }),
             4 => Ok(Command { info: RemoveFabric::from_string(command_info)?, }),
+            5 => Ok(Command { info: Stop::from_string(command_info)?, }),
             _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected envelope info_type: {}", info_type))),
         }
     }
@@ -254,6 +283,11 @@ pub struct RemoveFabric {
     pub conn_type: String, 
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Stop {
+    pub message: Option<String>,
+}
+
 macro_rules! impl_command_info {
     ($($t:ty),+) => {
         $(impl CommandInfo for $t {
@@ -264,6 +298,7 @@ macro_rules! impl_command_info {
                     "vr_actuators_cli::network::NotOkay" => 2,
                     "vr_actuators_cli::network::AddFabric" => 3,
                     "vr_actuators_cli::network::RemoveFabric" => 4,
+                    "vr_actuators_cli::network::Stop" => 5,
                     _ => 0
                 }
             }
@@ -280,50 +315,65 @@ macro_rules! impl_command_info {
     }
 }
 
-impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric);
+impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric, Stop);
 
 pub trait Visitor {
-    fn visit(self: &Self, state: &mut Server);
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 impl Visitor for Okay {
-    fn visit(self: &Self, _: &mut Server) {
+    fn visit(self: &Self, _: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Nothing to do for Okay command");
+        Ok(())
     }
 }
 impl Visitor for NotOkay {
-    fn visit(self: &Self, _: &mut Server) {
+    fn visit(self: &Self, _: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
         log::info!("Nothing to do for NotOkay command");
+        Ok(())
     }
 }
 
 impl Visitor for AddFabric {
-    fn visit(self: &Self, state: &mut Server) {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
         match vrp::Fabric::new(self.fabric_name.as_str()) {
             Ok(fabric) => {
                 state.fabrics.push(fabric);
                 log::info!("Added new fabric to command for AddFabric command");
                 log::trace!("Active Fabrics: {:#?}", state.fabrics);
+                Ok(())
             },
             Err(err) => {
                 log::error!("Failed to create Fabric: {}", err);
+                Err(err)
             }
         }
     }
 }
 
 impl Visitor for RemoveFabric {
-    fn visit(self: &Self, state: &mut Server) {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
         match state.fabrics.binary_search_by(|fabric| fabric.name.cmp(&self.fabric_name)) {
             Ok(position) => {
                 state.fabrics.remove(position);
                 log::info!("Removed existing fabric to command for AddFabric command");
                 log::trace!("Active Fabrics:  {:#?}", state.fabrics);
+                Ok(())
             },
-            Err(_) => {
-                log::info!("No existing fabric to remove for RemoveFabric command");
+            Err(err) => {
+                let message = format!("No existing fabric to remove for RemoveFabric command: {}", err);
+                log::error!("{}", message.as_str());
+                Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
             }
         }
+    }
+}
+
+impl Visitor for Stop {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Received Stop command with message {:?}. Shutting down ...", self.message);
+        state.shutting_down = true;
+        Ok(())
     }
 }
 

@@ -1,5 +1,4 @@
 mod network;
-mod vrp;
 
 fn main() -> Result<(), std::io::Error> {
     // Define the acceptable user input behavior
@@ -90,7 +89,7 @@ fn main() -> Result<(), std::io::Error> {
             let mut server = network::Server::new(protocol.as_str(), hostname.as_str(), port).expect("Failed to initialize server");
             match server.serve() {
                 Ok(_) => {
-                    log::info!("Finished serving with Ok result ... Restarting ...");
+                    log::info!("Finished serving with Ok result.");
                 },
                 Err(err) => {
                     log::error!("Encountered error: {}", err);

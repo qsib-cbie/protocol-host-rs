@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use byteorder::{ByteOrder, LittleEndian};
+use serial::{ObidSerialReceivable, ObidSerialSendable};
+
+#[path = "serial.rs"] mod serial;
 
 
 pub struct Fabric {
@@ -8,7 +10,7 @@ pub struct Fabric {
     pub name: String,
     pub uuid: uuid::Uuid,
 
-    conn: Box<dyn FabricConnection>,
+    conn: Box<dyn FabricConnection + Send>,
 }
 
 impl std::fmt::Debug for Fabric {
@@ -31,6 +33,8 @@ impl Fabric {
     }
 }
 
+/// Feig-based Connections are documented here
+/// http://www.sebeto.com/intranet/ftpscambio/RFID_FEIG/Readers/ID%20ISC%20LR2500/Documentation/H01112-0e-ID-B.pdf
 pub trait FabricConnection { 
     fn test_connection(self: & Self) -> Result<(), Box<dyn std::error::Error>>;
 
@@ -102,6 +106,37 @@ impl UsbConnection {
         }
     }
 
+    /**
+     * A function for getting a hanlde that has claimed an Obid/Feig reader and prints interface/endpoint info to trace
+     *
+     * 2020-07-13 12:15:50,835 DEBUG [vr_actuators_cli::network::vrp] Interface Descriptor of 0: InterfaceDescriptor {
+     *    bLength: 9,
+     *    bDescriptorType: 4,
+     *    bInterfaceNumber: 0,
+     *    bAlternateSetting: 0,
+     *    bNumEndpoints: 2,
+     *    bInterfaceClass: 255,
+     *    bInterfaceSubClass: 255,
+     *    bInterfaceProtocol: 0,
+     *    iInterface: 6,
+     *}
+     *2020-07-13 12:15:50,835 DEBUG [vr_actuators_cli::network::vrp] Endpoint Descriptor of 0: EndpointDescriptor {
+     *    bLength: 7,
+     *    bDescriptorType: 5,
+     *    bEndpointAddress: 129,
+     *    bmAttributes: 2,
+     *    wMaxPacketSize: 64,
+     *    bInterval: 0,
+     *}
+     *2020-07-13 12:15:50,835 DEBUG [vr_actuators_cli::network::vrp] Endpoint Descriptor of 0: EndpointDescriptor {
+     *    bLength: 7,
+     *    bDescriptorType: 5,
+     *    bEndpointAddress: 2,
+     *    bmAttributes: 2,
+     *    wMaxPacketSize: 64,
+     *    bInterval: 0,
+     *}
+     */
     pub fn _get_device_handle<'a>(self: &'a Self) -> Result<libusb::DeviceHandle<'a>, Box<dyn std::error::Error>> {
         for device in self.ctx.devices()?.iter() {
             let device_desc = device.device_descriptor()?;
@@ -113,7 +148,7 @@ impl UsbConnection {
                 device_desc.product_id());
 
             if device_desc.vendor_id() == 2737 {
-                log::debug!("Found USB Device || Bus {:03} Device {:03} ID {} : {}",
+                log::debug!("Found Obid/Feig USB Device || Bus {:03} Device {:03} ID {} : {}",
                     device.bus_number(),
                     device.address(),
                     device_desc.vendor_id(),
@@ -129,6 +164,12 @@ impl UsbConnection {
                     }
                     log::debug!("Claiming interface: {}", interface_number);
                     handle.claim_interface(interface_number)?;
+                    for interface_descriptor in interface.descriptors() {
+                        log::trace!("Interface Descriptor of {}: {:#?}", interface_number, interface_descriptor);
+                        for endpoint_descriptor in interface_descriptor.endpoint_descriptors() {
+                            log::trace!("Endpoint Descriptor of {}: {:#?}", interface_number, endpoint_descriptor);
+                        }
+                    }
                 }
                 
                 return Ok(handle);
@@ -138,13 +179,34 @@ impl UsbConnection {
         Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No matching USB device found")))
     }
 
+    /**
+     * The Serial Data Format and Protocol Frames are well defined for the Feig reader.
+     * 
+     * If using a TCP/IP protocol, the data of the TCP/IP protocol frame is the Serial Data Format
+     * and Protocol Frames data payload. There are additional parameters for TCP that are documented.
+     *
+     * For USB, we just need to worry about getting the correct framing in order to get a response.
+
+     * Protocol frame: Standard Protocol-Length (up to 255 byte)
+     * Protocol frame: Advanced Protocol-Length (up to 65535 byte)
+     */
+    fn frame_message() -> std::vec::Vec<u8> {
+
+
+        vec![]
+    }
+
     /// ???
     /// Get the UUID of the Feig array
     fn get_inventory_id(self: & Self) -> Result<Box<std::vec::Vec<u8>>, Box<dyn std::error::Error>> {
-        let mut inventory_id_request = vec![2,0,9,255,176,1,0];
-        log::trace!("Requesting inventory id with command: {}", hex::encode(&inventory_id_request));
+        log::trace!("Requesting inventory id");
         let device_handle = self.get_device_handle()?;
-        self.send_command(&device_handle, &mut inventory_id_request)
+        // let mut inventory_id_request = vec![2,0,9,255,176,1,0];
+        let inventory_request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, false);
+        let inventory_response = self.send_command(&device_handle, inventory_request)?;
+        log::info!("Received inventory_response: {:#?}", inventory_response);
+
+        Ok(Box::new(vec![]))
     }
 
     /// Set the wattage for the RF power on the antenna
@@ -179,32 +241,19 @@ impl UsbConnection {
         Ok(String::from(format!("{:X}", num_blocks)))
     }
 
-    /// CRC16 encodes the message by extension
-    fn encode_crc16(msg: &mut std::vec::Vec<u8>) {
-        let crc_poly: u16 = 0x8408;
-        let mut crc: u16 = 0xFFFF;
-        for msg_byte in msg.iter() {
-            crc = crc ^ (*msg_byte as u16);
-            for _ in 0..8 {
-                if crc & 1 == 1 {
-                    crc = (crc >> 1) ^ crc_poly;
-                } else {
-                    crc = crc >> 1;
-                }
-            }
-        }
-
-        LittleEndian::write_u16(msg, crc);
-    }
-
-    fn send_command<'a>(self: & Self, device_handle: & libusb::DeviceHandle<'a>, msg: &mut std::vec::Vec<u8>) -> Result<Box<std::vec::Vec<u8>>, Box<dyn std::error::Error>> {
-        // Serial expects CRC 16 encoded communications
-        UsbConnection::encode_crc16(msg);
+    fn send_command<'a>(self: & Self, device_handle: & libusb::DeviceHandle<'a>, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
+        // Marshal the serial command
+        let mut serial_message = serial_message;
+        let msg = serial_message.serialize();
 
         let mut attempts = 0;
+        let mut response_message_buffer = vec![0; 1024 * 1024 * 64]; // Max message size
         loop {
+            // Documented not less than 5 milliseconds
+            std::thread::sleep(std::time::Duration::from_millis(10));
+
             // Send the command to the Feig reader
-            match device_handle.write_bulk(2, &msg, std::time::Duration::from_millis(1000)) {
+            match device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(25)) {
                 Ok(bytes_written) => {
                     log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
                 },
@@ -215,35 +264,47 @@ impl UsbConnection {
             }
 
             // Read the response to the command
-            let mut resp_msg: std::vec::Vec<_> = vec![];
-            match device_handle.read_bulk(129, &mut resp_msg, std::time::Duration::from_millis(1000)) {
+            attempts += 1;
+            let response_message_size ;
+            match device_handle.read_bulk(129, &mut response_message_buffer, std::time::Duration::from_millis(500)) {
                 Ok(bytes_read) => {
-                    log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&resp_msg));
+                    log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&response_message_buffer[..bytes_read]));
+                    response_message_size = bytes_read;
                 },
                 Err(err) => {
                     log::error!("Failed Serial Command Read: {}", err.to_string());
-                    return Err(Box::new(err));
+                    continue
+                    // return Err(Box::new(err));
                 }
             }
-        
+
+            // Interpret the response
+            let response = serial::advanced_protocol::ReaderToHost::deserialize(&response_message_buffer[..response_message_size])?;
+            log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);
+
+
             // Check for errors
-            if resp_msg.len() >= 6 && (resp_msg[2] == 8 || resp_msg[2] == 9) {
-                if resp_msg[5] == 132 {
-                    log::error!("Antenna Warning!");
-                } else if resp_msg[5] == 1 {
-                    attempts += 1;
-                    log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
-                    if attempts > self.state.max_attempts {
-                        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in sensor")));
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        continue;
-                    }
+            if response.status == 0x84 {
+                /*
+                 * A monitor is continusously checking the RF hardware and
+                 * if an error occurs the Reader answers every command with
+                 * the error code 0x84
+                 */
+                 let error_message = String::from("Generic Antenna Error: RF hardware monitor error status code 0x84");
+                 log::error!("{}", error_message);
+                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
+            } else if serial_message.device_required && response.status == 0x01 {
+                log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
+                if attempts > self.state.max_attempts {
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in sensor")));
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
                 }
             }
 
             // All done
-            return Ok(Box::new(resp_msg));
+            return Ok(response);
         }
     }
 
