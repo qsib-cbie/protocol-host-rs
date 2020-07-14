@@ -1,6 +1,6 @@
 mod network;
 
-fn main() -> Result<(), std::io::Error> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define the acceptable user input behavior
     let matches = clap::App::new("VR Actuators")
         .version("v0.1")
@@ -85,8 +85,10 @@ fn main() -> Result<(), std::io::Error> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected a small integer for port");
 
+        let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
+        let server_context = network::ServerContext::new(endpoint)?;
         loop {
-            let mut server = network::Server::new(protocol.as_str(), hostname.as_str(), port).expect("Failed to initialize server");
+            let mut server = network::Server::new(&server_context).expect("Failed to initialize server");
             match server.serve() {
                 Ok(_) => {
                     log::info!("Finished serving with Ok result.");
@@ -107,7 +109,8 @@ fn main() -> Result<(), std::io::Error> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected small integer for port");
 
-        let mut client = network::Client::new(protocol.as_str(), hostname.as_str(), port).expect("Failed to initialize client");
+        let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
+        let mut client = network::Client::new(endpoint).expect("Failed to initialize client");
 
         // Send each of the commands
         let commands = String::from(matches.value_of("commands").unwrap());

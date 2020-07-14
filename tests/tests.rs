@@ -22,40 +22,68 @@ where
 }
 
 
-fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>) {
-    panic_after(Duration::from_millis(timeout), || {
-        // Multiple tests may attempt to re-register the logger
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    // Multiple tests may attempt to re-register the logger
+    let _ = simple_logger::init_with_level(log::Level::Debug);
 
-        #[derive(Clone)]
-        struct ThreadInfo<'a> {
-            protocol: &'a str,
-            hostname: &'a str,
-            port: i16,
-        };
+    panic_after(Duration::from_millis(timeout), move || {
+        let shared_endpoint = std::sync::Mutex::new(String::from(""));
+        let shared_endpoint = std::sync::Arc::new(shared_endpoint);
 
-        let server = vr_actuators_cli::network::Server::new("tcp", "*", 0);
-        assert!(server.is_ok());
-        let server = server.unwrap();
-        let endpoint = server.get_last_endpoint();
-        log::info!("Bound to endpoint: {}", endpoint); 
+        let server_endpoint = shared_endpoint.clone();
+        let client_endpoint = shared_endpoint.clone();
+        let server_handle = std::thread::spawn(move || -> Result<(), ()>  {
+            let endpoint = vr_actuators_cli::network::NetworkContext::get_endpoint("tcp", "*", 0);
+            let server_context = vr_actuators_cli::network::ServerContext::new(endpoint);
+            match server_context {
+                Ok(_) => {}
+                Err(_) => { return Err(()); }
+            }
+            let server_context = server_context.unwrap();
+            let server = vr_actuators_cli::network::Server::new(&server_context);
+            match &server {
+                Ok(_) => {}
+                Err(err) => { 
+                    log::error!("Failed to initialize server: {}", err);
+                    return Err(());
+                }
+            }
+            let mut server = server.unwrap();
 
-        let server_handle = std::thread::spawn(move || {
-            let mut server = server;
+            let endpoint = server.get_last_endpoint();
+            log::info!("Bound to endpoint: {}", endpoint); 
+            {
+                *server_endpoint.lock().unwrap() = endpoint;
+            }
+
             match server.serve() {
                 Ok(_) => {
                     log::info!("Finished serving with Ok result.");
                 },
                 Err(err) => {
+                    log::error!("Failed to server: {}", err);
                     panic!(format!("Encountered error: {}", err));
                 }
             }
 
-            ()
+            Ok(())
         });
 
         let client_handle = std::thread::spawn(move || {
-            let client = vr_actuators_cli::network::Client::from_endpoint(endpoint);
+            let endpoint;
+            loop {
+                {
+                    let guard = client_endpoint.lock().unwrap();
+                    if !guard.is_empty() {
+                        endpoint = guard.clone();
+                        break;
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
+            let client = vr_actuators_cli::network::Client::new(endpoint);
             assert!(client.is_ok());
             let mut client = client.unwrap();
 
@@ -79,16 +107,32 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
         assert!(client_result.is_ok());
         assert!(server_result.is_ok());
     });
+
+    Ok(())
 }
 
 #[test]
-fn nop_serve_to_client() {
-    connect_client_to_server(50000, vec![]);
+fn nop_serve_to_client() -> Result<(), Box<dyn std::error::Error>> {
+    connect_client_to_server(500, vec![])
 }
 
 #[test]
-fn connect_to_fabric() {
-    connect_client_to_server(15000, vec![
+fn connect_to_fabric() -> Result<(), Box<dyn std::error::Error>> {
+    connect_client_to_server(500, vec![
         String::from(r#"{ "command_type": "AddFabric", "command": { "fabric_name": "Obid Feig LRM2500-B", "conn_type": "NFC" } }"#),
-    ]);
+    ])
+}
+
+#[test]
+fn set_the_power_level() -> Result<(), Box<dyn std::error::Error>> {
+    connect_client_to_server(500, vec![
+        String::from(r#"{ "command_type": "SetRadioFreqPower", "command": { "power_level": 4 } }"#),
+    ])
+}
+
+#[test]
+fn set_the_power_level_low_power() -> Result<(), Box<dyn std::error::Error>> {
+    connect_client_to_server(500, vec![
+        String::from(r#"{ "command_type": "SetRadioFreqPower", "command": { "power_level": 0 } }"#),
+    ])
 }

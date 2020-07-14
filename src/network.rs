@@ -11,16 +11,11 @@ pub struct NetworkContext {
 
 impl NetworkContext {
 
-    pub fn new(protocol: &str, hostname: &str, port: i16, socket_type: zmq::SocketType) -> Result<NetworkContext, Box<dyn std::error::Error>> {
-        let ctx = Self::_new(String::from(format!("{}://{}:{}", protocol, hostname, port.to_string())), socket_type);
-        match ctx {
-            Ok(ctx) => Ok(ctx),
-            Err(err) => Err(err.into()),
-        }
+    pub fn get_endpoint(protocol: &str, hostname: &str, port: i16) -> String {
+        String::from(format!("{}://{}:{}", protocol, hostname, port.to_string()))
     }
 
-    #[allow(dead_code)]
-    pub fn from_endpoint(endpoint: String, socket_type: zmq::SocketType) -> Result<NetworkContext, Box<dyn std::error::Error>> {
+    pub fn new(endpoint: String, socket_type: zmq::SocketType) -> Result<NetworkContext, Box<dyn std::error::Error>> {
         let ctx = Self::_new(endpoint, socket_type);
         match ctx {
             Ok(ctx) => Ok(ctx),
@@ -66,8 +61,23 @@ impl NetworkContext {
     }
 }
 
-pub struct Server {
+pub struct ServerContext {
     net_ctx: NetworkContext,
+    usb_ctx: libusb::Context,
+}
+
+impl ServerContext {
+    pub fn new(endpoint: String) -> Result<ServerContext, Box<dyn std::error::Error>> {
+        Ok(ServerContext {
+            net_ctx: NetworkContext::new(endpoint, zmq::REP)?,
+            usb_ctx: libusb::Context::new()?,
+        })
+    }
+}
+
+pub struct Server<'a> {
+    ctx: &'a ServerContext,
+    conn: vrp::UsbConnection<'a>,
     fabrics: std::vec::Vec<vrp::Fabric>,
     shutting_down: bool,
 }
@@ -76,10 +86,11 @@ pub struct Client {
     net_ctx: NetworkContext
 }
 
-impl Server {
-    pub fn new(protocol: &str, hostname: &str, port: i16) -> Result<Server, Box<dyn std::error::Error>> {
+impl<'a> Server<'a> {
+    pub fn new(ctx: &'a ServerContext) -> Result<Server<'a>, Box<dyn std::error::Error>> {
         Ok(Server {
-            net_ctx: NetworkContext::new(protocol, hostname, port, zmq::REP)?,
+            ctx,
+            conn: vrp::UsbConnection::new(&ctx.usb_ctx)?,
             fabrics: std::vec::Vec::new(),
             shutting_down: false
         })
@@ -90,17 +101,17 @@ impl Server {
         loop {
             // 1. Read the type of the next message
             let mut message = zmq::Message::new();
-            self.net_ctx.socket.recv(&mut message, 0)?;
+            self.ctx.net_ctx.socket.recv(&mut message, 0)?;
             let command_info_message = message.as_str().unwrap();
             log::trace!("Received: {}", command_info_message);
             let command_info_type = command_info_message.parse();
 
             // 1.5 Send confirmation of command_info_type received
-            self.net_ctx.socket.send("", 0)?;
+            self.ctx.net_ctx.socket.send("", 0)?;
 
             // 2. Read the next message
             let mut message = zmq::Message::new();
-            self.net_ctx.socket.recv(&mut message, 0)?;
+            self.ctx.net_ctx.socket.recv(&mut message, 0)?;
             let command_message = message.as_str().unwrap();
 
             match command_info_type {
@@ -113,15 +124,15 @@ impl Server {
 
                     // 3. Send the message type
                     let okay_type = okay.type_id().to_string();
-                    self.net_ctx.socket.send(okay_type.as_bytes(), 0)?;
+                    self.ctx.net_ctx.socket.send(okay_type.as_bytes(), 0)?;
                     log::trace!("Sent: {}", okay_type);
 
                     // 3.5 Recv the confirmation of the okay_type
-                    self.net_ctx.socket.recv(&mut message, 0)?;
+                    self.ctx.net_ctx.socket.recv(&mut message, 0)?;
 
                     // 4. Send the not okay
                     let okay_message = okay.to_string()?;
-                    self.net_ctx.socket.send(okay_message.as_bytes(), 0)?;
+                    self.ctx.net_ctx.socket.send(okay_message.as_bytes(), 0)?;
                     log::trace!("Sent: {}", okay_message);
 
                     // 5. Maybe finish
@@ -142,15 +153,15 @@ impl Server {
 
                     // 3. Send the message type
                     let not_okay_type = not_okay.type_id().to_string();
-                    self.net_ctx.socket.send(not_okay_type.as_bytes(), 0)?;
+                    self.ctx.net_ctx.socket.send(not_okay_type.as_bytes(), 0)?;
                     log::debug!("Sent: {}", not_okay_type);
 
                     // 3.5 Recv the confirmation of the not_okay_type
-                    self.net_ctx.socket.recv(&mut message, 0)?;
+                    self.ctx.net_ctx.socket.recv(&mut message, 0)?;
 
                     // 4. Send the not okay
                     let not_okay_message = not_okay.to_string()?;
-                    self.net_ctx.socket.send(not_okay_message.as_bytes(), 0)?;
+                    self.ctx.net_ctx.socket.send(not_okay_message.as_bytes(), 0)?;
                     log::debug!("Sent: {}", not_okay_message);
                 }
             }
@@ -159,21 +170,14 @@ impl Server {
 
     #[allow(dead_code)]
     pub fn get_last_endpoint(self: &Self) -> String {
-        self.net_ctx.socket.get_last_endpoint().unwrap().unwrap()
+        self.ctx.net_ctx.socket.get_last_endpoint().unwrap().unwrap()
     }
 }
 
 impl Client {
-    pub fn new(protocol: &str, hostname: &str, port: i16) -> Result<Client, Box<dyn std::error::Error>> {
+    pub fn new(endpoint: String) -> Result<Client, Box<dyn std::error::Error>> {
         Ok(Client {
-            net_ctx: NetworkContext::new(protocol, hostname, port, zmq::REQ)?,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn from_endpoint(endpoint: String) -> Result<Client, Box<dyn std::error::Error>> {
-        Ok(Client {
-            net_ctx: NetworkContext::from_endpoint(endpoint, zmq::REQ)?,
+            net_ctx: NetworkContext::new(endpoint, zmq::REQ)?,
         })
     }
 
@@ -230,6 +234,7 @@ impl Client {
             "AddFabric" => Ok(Command { info: AddFabric::from_string(ser_str)?, }),
             "RemoveFabric" => Ok(Command { info: RemoveFabric::from_string(ser_str)?, }),
             "Stop" => Ok(Command { info: Stop::from_string(ser_str)?, }),
+            "SetRadioFreqPower" => Ok(Command { info: SetRadioFreqPower::from_string(ser_str)?, }),
             _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "Bad 'command' object. Check command definitions")),
         }
     }
@@ -248,6 +253,7 @@ impl Command {
             3 => Ok(Command { info: AddFabric::from_string(command_info)?, }),
             4 => Ok(Command { info: RemoveFabric::from_string(command_info)?, }),
             5 => Ok(Command { info: Stop::from_string(command_info)?, }),
+            6 => Ok(Command { info: SetRadioFreqPower::from_string(command_info)?, }),
             _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected envelope info_type: {}", info_type))),
         }
     }
@@ -288,6 +294,11 @@ pub struct Stop {
     pub message: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SetRadioFreqPower {
+    pub power_level: u8, // Min 4, Max 12
+}
+
 macro_rules! impl_command_info {
     ($($t:ty),+) => {
         $(impl CommandInfo for $t {
@@ -299,6 +310,7 @@ macro_rules! impl_command_info {
                     "vr_actuators_cli::network::AddFabric" => 3,
                     "vr_actuators_cli::network::RemoveFabric" => 4,
                     "vr_actuators_cli::network::Stop" => 5,
+                    "vr_actuators_cli::network::SetRadioFreqPower" => 6,
                     _ => 0
                 }
             }
@@ -315,7 +327,7 @@ macro_rules! impl_command_info {
     }
 }
 
-impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric, Stop);
+impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric, Stop, SetRadioFreqPower);
 
 pub trait Visitor {
     fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>>;
@@ -336,9 +348,10 @@ impl Visitor for NotOkay {
 
 impl Visitor for AddFabric {
     fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
-        match vrp::Fabric::new(self.fabric_name.as_str()) {
+        match vrp::Fabric::new(&state.conn, self.fabric_name.as_str()) {
             Ok(fabric) => {
                 state.fabrics.push(fabric);
+                state.fabrics.sort_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
                 log::info!("Added new fabric to command for AddFabric command");
                 log::trace!("Active Fabrics: {:#?}", state.fabrics);
                 Ok(())
@@ -377,3 +390,15 @@ impl Visitor for Stop {
     }
 }
 
+impl Visitor for SetRadioFreqPower {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Received SetRadioFreqPower command for power_level {:?}.", self.power_level);
+        if self.power_level == 0 || (self.power_level >= 2 && self.power_level <= 12) {
+            state.conn.set_radio_freq_power(self.power_level) 
+        } else {
+            let message = format!("Value for power level ({}) is outside acceptable range [4,12].", self.power_level);
+            log::error!("{}", message.as_str());
+            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+        }
+    }
+}
