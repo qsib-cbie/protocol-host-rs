@@ -127,12 +127,14 @@ fn connect_to_fabric() -> Result<(), Box<dyn std::error::Error>> {
 fn set_the_power_level() -> Result<(), Box<dyn std::error::Error>> {
     connect_client_to_server(500, vec![
         String::from(r#"{ "command_type": "SetRadioFreqPower", "command": { "power_level": 4 } }"#),
+        String::from(r#"{ "command_type": "SystemReset", "command": { } }"#),
     ])
 }
 
 #[test]
 fn set_the_power_level_low_power() -> Result<(), Box<dyn std::error::Error>> {
-    connect_client_to_server(500, vec![
+    connect_client_to_server(1000, vec![
         String::from(r#"{ "command_type": "SetRadioFreqPower", "command": { "power_level": 0 } }"#),
+        String::from(r#"{ "command_type": "SystemReset", "command": { } }"#),
     ])
 }

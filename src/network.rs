@@ -235,6 +235,7 @@ impl Client {
             "RemoveFabric" => Ok(Command { info: RemoveFabric::from_string(ser_str)?, }),
             "Stop" => Ok(Command { info: Stop::from_string(ser_str)?, }),
             "SetRadioFreqPower" => Ok(Command { info: SetRadioFreqPower::from_string(ser_str)?, }),
+            "SystemReset" => Ok(Command { info: SystemReset::from_string(ser_str)?, }),
             _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "Bad 'command' object. Check command definitions")),
         }
     }
@@ -254,9 +255,14 @@ impl Command {
             4 => Ok(Command { info: RemoveFabric::from_string(command_info)?, }),
             5 => Ok(Command { info: Stop::from_string(command_info)?, }),
             6 => Ok(Command { info: SetRadioFreqPower::from_string(command_info)?, }),
+            7 => Ok(Command { info: SystemReset::from_string(command_info)?, }),
             _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected envelope info_type: {}", info_type))),
         }
     }
+}
+
+pub trait Visitor {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 pub trait CommandInfo: Visitor {
@@ -296,42 +302,11 @@ pub struct Stop {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SetRadioFreqPower {
-    pub power_level: u8, // Min 4, Max 12
+    pub power_level: u8,
 }
 
-macro_rules! impl_command_info {
-    ($($t:ty),+) => {
-        $(impl CommandInfo for $t {
-            fn type_id(self: &Self) -> i16 {
-                log::trace!("Choosing type_id enumeration for {}", std::any::type_name::<$t>());
-                match std::any::type_name::<$t>() {
-                    "vr_actuators_cli::network::Okay" => 1,
-                    "vr_actuators_cli::network::NotOkay" => 2,
-                    "vr_actuators_cli::network::AddFabric" => 3,
-                    "vr_actuators_cli::network::RemoveFabric" => 4,
-                    "vr_actuators_cli::network::Stop" => 5,
-                    "vr_actuators_cli::network::SetRadioFreqPower" => 6,
-                    _ => 0
-                }
-            }
-
-            fn to_string(self: &Self) -> Result<String, serde_json::error::Error> {
-                serde_json::to_string(self)
-            }
-
-            fn from_string(ser_self: &str) -> Result<Box<dyn CommandInfo>, serde_json::error::Error> {
-                let de_self: $t = serde_json::from_str(ser_self)?;
-                Ok(Box::new(de_self))
-            }
-        })+
-    }
-}
-
-impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric, Stop, SetRadioFreqPower);
-
-pub trait Visitor {
-    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>>;
-}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SystemReset { }
 
 impl Visitor for Okay {
     fn visit(self: &Self, _: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
@@ -396,9 +371,47 @@ impl Visitor for SetRadioFreqPower {
         if self.power_level == 0 || (self.power_level >= 2 && self.power_level <= 12) {
             state.conn.set_radio_freq_power(self.power_level) 
         } else {
-            let message = format!("Value for power level ({}) is outside acceptable range [4,12].", self.power_level);
+            let message = format!("Value for power level ({}) is outside acceptable range Low Power (0) or [2,12].", self.power_level);
             log::error!("{}", message.as_str());
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
         }
     }
 }
+
+impl Visitor for SystemReset {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Received SystemReset.");
+        state.conn.system_reset()
+    }
+}
+
+macro_rules! impl_command_info {
+    ($($t:ty),+) => {
+        $(impl CommandInfo for $t {
+            fn type_id(self: &Self) -> i16 {
+                log::trace!("Choosing type_id enumeration for {}", std::any::type_name::<$t>());
+                match std::any::type_name::<$t>() {
+                    "vr_actuators_cli::network::Okay" => 1,
+                    "vr_actuators_cli::network::NotOkay" => 2,
+                    "vr_actuators_cli::network::AddFabric" => 3,
+                    "vr_actuators_cli::network::RemoveFabric" => 4,
+                    "vr_actuators_cli::network::Stop" => 5,
+                    "vr_actuators_cli::network::SetRadioFreqPower" => 6,
+                    "vr_actuators_cli::network::SystemReset" => 7,
+                    _ => 0
+                }
+            }
+
+            fn to_string(self: &Self) -> Result<String, serde_json::error::Error> {
+                serde_json::to_string(self)
+            }
+
+            fn from_string(ser_self: &str) -> Result<Box<dyn CommandInfo>, serde_json::error::Error> {
+                let de_self: $t = serde_json::from_str(ser_self)?;
+                Ok(Box::new(de_self))
+            }
+        })+
+    }
+}
+
+impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric, Stop, SetRadioFreqPower, SystemReset);

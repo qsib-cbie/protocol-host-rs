@@ -196,25 +196,38 @@ impl<'a> UsbConnection<'a> {
             0x1, // Bank
             0x1, // Mode
             0x1, // CFG-N
-            0x1E, // Block Size 
-            // 0x0e, // 0x1E, // Block Size  // IDK WHY WE WOULDN'T use this
-            0x00, // CFG-ADR // THIS ONE IS CONFUSING, 0x03 Refers to CFG3 and that is the next byte
-            0x03, // CFG-Data
-            0x00, // CFG-Data
-            0x09, // 0x08 // CFG-Data // The docs say 0x09 is the default and that 0x08 doesn't mean anything ...
-            encoded_rf_power, // CFG-Data
-            0x80, // CFG-Data ...
-            0,0,0,0,0,0,0,0,0,128
+            30, // Block Size  // IDK why we need the extra 16 zeros that don't map to the CFG block
+            0x00, // MSB CFG-ADR
+            0x03, // LSB CFG-ADR 
+            0x00,             // CFG-Data :: CFG3 Byte 0 TAG-DRV
+            0x09,             // CFG-Data :: CFG3 Byte 1 TAG-DRV
+            encoded_rf_power, // CFG-Data :: CFG3 Byte 2 RF-POWER
+            0x80,             // CFG-Data :: CFG3 Byte 3 EAS-LEVEL
+            0,0,0,            // CFG-Data :: CFG3 Byte 4,5,6 0x00
+            0,0,0,0,0,0,      // CFG-Data :: CFG3 Byte 7,8,9,10,11,12 0x00
+            0b1000_0000       // CFG-Data :: CFG3 Byte 13 FU_COM,
             ,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 // IDK WHY THIS IS REQUIRED
         ];
 
 
 
         let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0x8B, data.as_slice(), 0, false);
-        let response= self.send_command(request)?;
+        let response = self.send_command(request)?;
         log::info!("Received response: {:#?}", response);    
         if response.status == 0x11 {
             let error_message = "A reasonableness check failed while writing the RF power parameter to the reader" ;
+            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn system_reset(self: &mut Self)  -> Result<(), Box<dyn std::error::Error>> {
+        log::trace!("Requesting System Reset of RF controller ...");
+        let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0x64, vec![0].as_slice(), 0, false);
+        let response = self.send_command(request)?;
+        if response.status != 0x00 {
+            let error_message = format!("System reset failed with status code: {}. See Annex D of system manual for more information", response.status);
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
         } else {
             Ok(())
