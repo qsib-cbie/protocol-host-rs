@@ -3,6 +3,7 @@
 use serial::{ObidSerialReceivable, ObidSerialSendable};
 
 #[path = "serial.rs"] mod serial;
+#[path = "obid.rs"] mod obid;
 
 #[derive(Debug)]
 pub struct ObidTransponder {
