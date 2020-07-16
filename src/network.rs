@@ -236,7 +236,12 @@ impl Client {
             "Stop" => Ok(Command { info: Stop::from_string(ser_str)?, }),
             "SetRadioFreqPower" => Ok(Command { info: SetRadioFreqPower::from_string(ser_str)?, }),
             "SystemReset" => Ok(Command { info: SystemReset::from_string(ser_str)?, }),
-            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "Bad 'command' object. Check command definitions")),
+            "CustomCommand" => Ok(Command { info: CustomCommand::from_string(ser_str)?, }),
+            "ActuatorsCommand" => Ok(Command { info: vrp::ActuatorsCommand::from_string(ser_str)?, }),
+            _ => {
+                log::error!("Unregistered command type.");
+                Err(std::io::Error::new(std::io::ErrorKind::Other, "Bad 'command' object. Check command definitions"))
+            },
         }
     }
 }
@@ -256,6 +261,8 @@ impl Command {
             5 => Ok(Command { info: Stop::from_string(command_info)?, }),
             6 => Ok(Command { info: SetRadioFreqPower::from_string(command_info)?, }),
             7 => Ok(Command { info: SystemReset::from_string(command_info)?, }),
+            8 => Ok(Command { info: CustomCommand::from_string(command_info)?, }),
+            9 => Ok(Command { info: vrp::ActuatorsCommand::from_string(command_info)?, }),
             _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected envelope info_type: {}", info_type))),
         }
     }
@@ -307,6 +314,13 @@ pub struct SetRadioFreqPower {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SystemReset { }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CustomCommand {
+    pub control_byte: u8,
+    pub data: String,
+    pub device_required: bool,
+ }
 
 impl Visitor for Okay {
     fn visit(self: &Self, _: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
@@ -385,6 +399,44 @@ impl Visitor for SystemReset {
     }
 }
 
+impl Visitor for CustomCommand {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Received Custom command with control_byte {} and data {}", hex::encode(vec![self.control_byte]), hex::encode(self.data.as_bytes()));
+
+        let decoded_data = hex::decode(&self.data)?;
+        state.conn.custom_command(self.control_byte, decoded_data.as_slice(), self.device_required)
+    }
+}
+
+impl Visitor for vrp::ActuatorsCommand {
+    fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
+        log::info!("Received ActuatorsCommand: {:#?} ", self);
+
+        let fabric_uid;
+        match state.fabrics.binary_search_by(|fabric| fabric.name.cmp(&self.fabric_name)) {
+            Ok(position) => {
+                let transponders = &state.fabrics[position].transponders;
+                log::trace!("Found transponders for actuator command: {:?}", transponders);
+
+                if transponders.len() > 0 {
+                    fabric_uid = &transponders[0].uid;
+                } else {
+                    let message = format!("No UID for matching fabric: {:#?}", state.fabrics[position]);
+                    log::error!("{}", message.as_str());
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+                }
+            },
+            Err(err) => {
+                let message = format!("No existing fabric to write actuator command: {}", err);
+                log::error!("{}", message.as_str());
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+            }
+        }
+
+        state.conn.actuators_command(fabric_uid.as_slice(), self)
+    }
+}
+
 macro_rules! impl_command_info {
     ($($t:ty),+) => {
         $(impl CommandInfo for $t {
@@ -398,6 +450,8 @@ macro_rules! impl_command_info {
                     "vr_actuators_cli::network::Stop" => 5,
                     "vr_actuators_cli::network::SetRadioFreqPower" => 6,
                     "vr_actuators_cli::network::SystemReset" => 7,
+                    "vr_actuators_cli::network::CustomCommand" => 8,
+                    "vr_actuators_cli::network::vrp::ActuatorsCommand" => 9,
                     _ => 0
                 }
             }
@@ -414,4 +468,4 @@ macro_rules! impl_command_info {
     }
 }
 
-impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric, Stop, SetRadioFreqPower, SystemReset);
+impl_command_info!(Okay, NotOkay, AddFabric, RemoveFabric, Stop, SetRadioFreqPower, SystemReset, CustomCommand, vrp::ActuatorsCommand);

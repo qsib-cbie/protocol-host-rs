@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use serde::{Serialize, Deserialize};
 use serial::{ObidSerialReceivable, ObidSerialSendable};
 
 #[path = "serial.rs"] mod serial;
@@ -7,11 +8,65 @@ use serial::{ObidSerialReceivable, ObidSerialSendable};
 
 #[derive(Debug)]
 pub struct ObidTransponder {
-    uid: smallvec::SmallVec<[u8; 8]>, // 8-byte serial number
-    tr_type_rf_tec: u8,
-    tr_type_type_no: u8,
-    dsfid: u8
+    pub uid: smallvec::SmallVec<[u8; 8]>, // 8-byte serial number
+    pub tr_type_rf_tec: u8,
+    pub tr_type_type_no: u8,
+    pub dsfid: u8
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CustomCommand {
+    pub control_byte: u8,
+    pub data: String,
+    pub device_required: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct OpModeBlock {
+    pub act_cnt32: u8,
+    pub act_mode: u8,
+    pub op_mode: u8,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ActuatorModeBlock {
+    pub b0: u8,
+    pub b1: u8,
+    pub b2: u8,
+    pub b3: u8,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ActuatorModeBlocks {
+    pub block0_31: ActuatorModeBlock,
+    pub block32_63: ActuatorModeBlock,
+    pub block64_95: ActuatorModeBlock,
+    pub block96_127: ActuatorModeBlock,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TimerModeBlock {
+    pub b0: u8,
+    pub b1: u8,
+    pub b2: u8,
+    pub b3: u8,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TimerModeBlocks {
+    pub single_pulse_block: TimerModeBlock,
+    pub hf_block: TimerModeBlock,
+    pub lf_block: TimerModeBlock,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ActuatorsCommand {
+    pub fabric_name: String,
+    pub op_mode_block: Option<OpModeBlock>,
+    pub actuator_mode_blocks: Option<ActuatorModeBlocks>,
+    pub timer_mode_blocks: Option<TimerModeBlocks>,
+}
+
 
 pub struct Fabric {
     // A set of VR Actuator Blocks that are to be considered 1 unit
@@ -33,7 +88,7 @@ impl Fabric {
             transponders: smallvec::smallvec![],
         };
 
-        fabric.transponders = conn.get_inventory()?;
+        fabric.transponders = conn.get_inventory(true)?;
 
         Ok(fabric)
     }
@@ -62,7 +117,6 @@ pub struct AntennaState {
     act_mode: Option<String>,
 
     max_attempts: i32,
-
 }
 
 impl<'a> UsbConnection<'a> {
@@ -112,7 +166,7 @@ impl<'a> UsbConnection<'a> {
                         act_mode: None,
                         act_block_count: None,
 
-                        max_attempts: 5
+                        max_attempts: 200
                     }
                 });
             }
@@ -129,9 +183,9 @@ impl<'a> UsbConnection<'a> {
      * 
      * @return transponders in the array
      */
-    pub fn get_inventory(self: & Self) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>, Box<dyn std::error::Error>> {
+    pub fn get_inventory(self: & Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>, Box<dyn std::error::Error>> {
         log::trace!("Requesting inventory ids ...");
-        let inventory_request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, false);
+        let inventory_request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, expect_device);
         let inventory_response = self.send_command(inventory_request)?;
         log::info!("Received inventory_response: {:#?}", inventory_response);
 
@@ -159,6 +213,9 @@ impl<'a> UsbConnection<'a> {
                     dsfid
                 });
             }
+
+            log::debug!("Found transponders: {:?}", transponders);
+
             Ok(transponders)
         } else {
             Ok(smallvec::smallvec![])
@@ -201,12 +258,12 @@ impl<'a> UsbConnection<'a> {
             0x00, // MSB CFG-ADR
             0x03, // LSB CFG-ADR 
             0x00,             // CFG-Data :: CFG3 Byte 0 TAG-DRV
-            0x09,             // CFG-Data :: CFG3 Byte 1 TAG-DRV
+            0x08,             // CFG-Data :: CFG3 Byte 1 TAG-DRV
             encoded_rf_power, // CFG-Data :: CFG3 Byte 2 RF-POWER
             0x80,             // CFG-Data :: CFG3 Byte 3 EAS-LEVEL
             0,0,0,            // CFG-Data :: CFG3 Byte 4,5,6 0x00
             0,0,0,0,0,0,      // CFG-Data :: CFG3 Byte 7,8,9,10,11,12 0x00
-            0b1000_0000       // CFG-Data :: CFG3 Byte 13 FU_COM,
+            0b1000_0001       // CFG-Data :: CFG3 Byte 13 FU_COM,
             ,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 // IDK WHY THIS IS REQUIRED
         ];
 
@@ -227,39 +284,165 @@ impl<'a> UsbConnection<'a> {
         log::trace!("Requesting System Reset of RF controller ...");
         let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0x64, vec![0].as_slice(), 0, false);
         let response = self.send_command(request)?;
-        if response.status != 0x00 {
-            let error_message = format!("System reset failed with status code: {}. See Annex D of system manual for more information", response.status);
+
+        let status = obid::Status::from(response.status);
+        if status != obid::Status::Ok {
+            let error_message = format!("System reset failed with status code: {:?}.", status);
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
         } else {
             Ok(())
         }
     }
 
-    // /// Set operating mode (i.e. All off, turn on/off, single pulse, continous)
-    // fn get_op_mode(self: &mut Self) -> Result<String, Box<dyn std::error::Error>> {
-    //     // TODO: Fix how the modes are put together
-    //     if self.state.pulse_mode.is_some() && self.state.hf_mod.is_some() && self.state.lf_mod.is_some() {
-    //         let op_mode = self.state.pulse_mode.unwrap() + self.state.hf_mod.unwrap() + self.state.lf_mod.unwrap();
-    //         Ok(String::from(format!("{:X}", op_mode)))
-    //     } else {
-    //         log::error!("Cannot set op mode for state: {:#?}", self.state);
-    //         Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Invalid state to set op mode")))
-    //     }
-    // }
+    pub fn custom_command(self: &mut Self, control_byte: u8, data: &[u8], device_required: bool)  -> Result<(), Box<dyn std::error::Error>> {
+        log::trace!("Requesting Custom Command with control_byte {:#X?} and data {:#X?} ...", control_byte, data);
 
-    // /// Set actuation mode (i.e.Unipolar, bipolar)
-    // fn get_act_mode(self: &mut Self, mode: bool) -> Result<String, Box<dyn std::error::Error>> {
-    //     if mode {
-    //         Ok(String::from(format!("{:X}", 1)))
-    //     } else {
-    //         Ok(String::from(format!("{:X}", 0)))
-    //     }
-    // }
+        let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, control_byte, data, 0, device_required);
+        let response = self.send_command(request)?;
 
-    // /// Set the number of actuator blocks (32 actuators per block)
-    // fn get_act_block_count(self: &mut Self, num_blocks: i32) -> Result<String, Box<dyn std::error::Error>> {
-    //     Ok(String::from(format!("{:X}", num_blocks)))
-    // }
+        let status = obid::Status::from(response.status);
+        if status != obid::Status::Ok {
+            let error_message = format!("Command failed with status code: {:?}.", status);
+            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn actuators_command(self: &mut Self, uid: &[u8], command: &ActuatorsCommand)  -> Result<(), Box<dyn std::error::Error>> {
+        log::trace!("Requesting write to actuators' configuration ...");
+
+        if uid.len() != 8 {
+            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Expected UID, which is a serial number of 8 bytes, but found {} bytes", uid.len()))));
+        }
+
+        // Construct the feig command
+        let control_byte = 0xB0; // Control Byte for manipulating transponder
+        let command_id = 0x24;   // Command Id for Control Byte to write blocks to transponder's RF blocks
+        let mode = 0x01; // addressed
+        let _bank = 0x00; // this option is not used ?!
+        let db_n = 0x01;
+        let db_size = 0x04;
+
+        // Set the timer blocks first if present
+        if command.timer_mode_blocks.is_some() {
+            let timer_mode_blocks = command.timer_mode_blocks.as_ref().unwrap();
+
+            let addr = 0x09;
+            let bl = &timer_mode_blocks.single_pulse_block;
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
+            log::debug!("Setting single_pulse_block: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write timer block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+
+            let addr = 0x10;
+            let bl = &timer_mode_blocks.hf_block;
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
+            log::debug!("Setting hf_block: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write timer block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+
+            let addr = 0x11;
+            let bl = &timer_mode_blocks.lf_block;
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
+            log::debug!("Setting lf_block: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write timer block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+        }
+
+        // Set the actuator blocks next if present
+        if command.actuator_mode_blocks.is_some() {
+            let actuator_mode_blocks = command.actuator_mode_blocks.as_ref().unwrap();
+
+            let addr = 0x01;
+            let bl = &actuator_mode_blocks.block0_31;
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
+            log::debug!("Setting block0_31: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write actuators block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+
+            let addr = 0x02;
+            let bl = &actuator_mode_blocks.block32_63;
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
+            log::debug!("Setting block32_63: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write actuators block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+
+            let addr = 0x03;
+            let bl = &actuator_mode_blocks.block64_95;
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
+            log::debug!("Setting block64_95: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write actuators block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+
+            let addr = 0x04;
+            let bl = &actuator_mode_blocks.block96_127;
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
+            log::debug!("Setting block96_127: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write actuators block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+        }
+
+        // Set the mode block last
+        if command.op_mode_block.is_some() {
+            let addr = 0x00;
+            let bl = command.op_mode_block.as_ref().unwrap();
+            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, 0x00, bl.act_cnt32, bl.act_mode, bl.op_mode];
+            log::debug!("Setting op_mode_block: {}", hex::encode(&data));
+
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write actuators block for actuators command: {}", err);
+                    return Err(err);
+                }
+            }
+        }
+
+        Ok(())
+    }
 
     fn send_command(self: & Self, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
         // Marshal the serial command
@@ -269,8 +452,8 @@ impl<'a> UsbConnection<'a> {
         let mut attempts = 0;
         let mut response_message_buffer = vec![0; 1024 * 1024 * 64]; // Max message size
         loop {
-            // Documented not less than 5 milliseconds
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            // Documented not less than 5 milliseconds between messages
+            std::thread::sleep(std::time::Duration::from_millis(6));
 
             // Send the command to the Feig reader
             match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(25)) {
@@ -286,7 +469,7 @@ impl<'a> UsbConnection<'a> {
             // Read the response to the command
             attempts += 1;
             let response_message_size ;
-            match self.device_handle.read_bulk(129, &mut response_message_buffer, std::time::Duration::from_millis(500)) {
+            match self.device_handle.read_bulk(129, &mut response_message_buffer, std::time::Duration::from_millis(5000)) {
                 Ok(bytes_read) => {
                     log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&response_message_buffer[..bytes_read]));
                     response_message_size = bytes_read;
@@ -304,7 +487,8 @@ impl<'a> UsbConnection<'a> {
 
 
             // Check for errors
-            if response.status == 0x84 {
+            let status  = obid::Status::from(response.status);
+            if status == obid::Status::RFWarning {
                 /*
                  * A monitor is continusously checking the RF hardware and
                  * if an error occurs the Reader answers every command with
@@ -313,20 +497,20 @@ impl<'a> UsbConnection<'a> {
                  let error_message = String::from("Generic Antenna Error: RF hardware monitor error status code 0x84");
                  log::error!("{}", error_message);
                  return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
-            } else if serial_message.device_required && response.status == 0x01 {
+            } else if serial_message.device_required && status == obid::Status::NoTransponder {
                 log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
-                if attempts > self.state.max_attempts {
+                if attempts >= self.state.max_attempts {
                     return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in sensor")));
                 } else {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    std::thread::sleep(std::time::Duration::from_millis(8 * attempts as u64));
                     continue;
                 }
             }
+
+            // std::thread::sleep(std::time::Duration::from_millis(1000));
 
             // All done
             return Ok(response);
         }
     }
-
-
 }

@@ -1,5 +1,5 @@
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 #[repr(u8)]
 pub enum Status {
 
@@ -96,7 +96,7 @@ pub enum Status {
 
     // MARK: INTERFACE STATUS
 
-    
+
 
     /// The reader does not support the selected function
     UnknownCommand = 0x80,
@@ -104,6 +104,7 @@ pub enum Status {
     /// Protocol is too short or too long
     LengthError = 0x81,
 
+    /// Command not available
     CommandNotAvailable = 0x82,
 
     /// This error indicates that there is an error in communication between the Transponder
