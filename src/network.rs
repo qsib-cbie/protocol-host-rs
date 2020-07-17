@@ -337,7 +337,7 @@ impl Visitor for NotOkay {
 
 impl Visitor for AddFabric {
     fn visit(self: &Self, state: &mut Server) -> Result<(), Box<dyn std::error::Error>> {
-        match vrp::Fabric::new(&state.conn, self.fabric_name.as_str()) {
+        match vrp::Fabric::new(&mut state.conn, self.fabric_name.as_str()) {
             Ok(fabric) => {
                 state.fabrics.push(fabric);
                 state.fabrics.sort_by(|lhs, rhs| lhs.name.cmp(&rhs.name));

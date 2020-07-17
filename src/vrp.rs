@@ -82,7 +82,7 @@ impl std::fmt::Debug for Fabric {
 }
 
 impl Fabric {
-    pub fn new(conn: &UsbConnection, name: &str) -> Result<Fabric, Box<dyn std::error::Error>> {
+    pub fn new(conn: &mut UsbConnection, name: &str) -> Result<Fabric, Box<dyn std::error::Error>> {
         let mut fabric = Fabric {
             name: String::from(name),
             transponders: smallvec::smallvec![],
@@ -100,7 +100,7 @@ impl Fabric {
 pub struct UsbConnection<'a> {
     state: AntennaState,
     device_handle: libusb::DeviceHandle<'a>,
-
+    response_message_buffer: std::vec::Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -121,55 +121,61 @@ pub struct AntennaState {
 
 impl<'a> UsbConnection<'a> {
     pub fn new(ctx: &'a libusb::Context) -> Result<UsbConnection<'a>, Box<dyn std::error::Error>> {
-        for device in ctx.devices()?.iter() {
-            let device_desc = device.device_descriptor()?;
-            log::trace!("Found USB Device || Bus {:03} Device {:03} ID {} : {}",
-            device.bus_number(),
-            device.address(),
-            device_desc.vendor_id(),
-            device_desc.product_id());
+        for _ in 0..10 {
+            for device in ctx.devices()?.iter() {
+                let device_desc = device.device_descriptor()?;
+                log::trace!("Found USB Device || Bus {:03} Device {:03} ID {} : {}",
+                device.bus_number(),
+                device.address(),
+                device_desc.vendor_id(),
+                device_desc.product_id());
 
-            if device_desc.vendor_id() == 2737 {
-                log::debug!("Found Obid/Feig USB Device || Bus {:03} Device {:03} ID {} : {}",
-                    device.bus_number(),
-                    device.address(),
-                    device_desc.vendor_id(),
-                    device_desc.product_id());
-            
-                let mut device_handle = device.open()?;
-                device_handle.reset()?;
-                for interface in device.active_config_descriptor()?.interfaces() {
-                    let interface_number = interface.number();
-                    if device_handle.kernel_driver_active(interface_number)? {
-                        log::debug!("Detaching kernel from interface: {}", interface_number);
-                        device_handle.detach_kernel_driver(interface_number)?;
-                    }
-                    log::debug!("Claiming interface: {}", interface_number);
-                    device_handle.claim_interface(interface_number)?;
-                    for interface_descriptor in interface.descriptors() {
-                        log::trace!("Interface Descriptor of {}: {:#?}", interface_number, interface_descriptor);
-                        for endpoint_descriptor in interface_descriptor.endpoint_descriptors() {
-                            log::trace!("Endpoint Descriptor of {}: {:#?}", interface_number, endpoint_descriptor);
+                if device_desc.vendor_id() == 2737 {
+                    log::debug!("Found Obid/Feig USB Device || Bus {:03} Device {:03} ID {} : {}",
+                        device.bus_number(),
+                        device.address(),
+                        device_desc.vendor_id(),
+                        device_desc.product_id());
+                
+                    let mut device_handle = device.open()?;
+                    device_handle.reset()?;
+                    for interface in device.active_config_descriptor()?.interfaces() {
+                        let interface_number = interface.number();
+                        if device_handle.kernel_driver_active(interface_number)? {
+                            log::debug!("Detaching kernel from interface: {}", interface_number);
+                            device_handle.detach_kernel_driver(interface_number)?;
+                        }
+                        log::debug!("Claiming interface: {}", interface_number);
+                        device_handle.claim_interface(interface_number)?;
+                        for interface_descriptor in interface.descriptors() {
+                            log::trace!("Interface Descriptor of {}: {:#?}", interface_number, interface_descriptor);
+                            for endpoint_descriptor in interface_descriptor.endpoint_descriptors() {
+                                log::trace!("Endpoint Descriptor of {}: {:#?}", interface_number, endpoint_descriptor);
+                            }
                         }
                     }
+                    
+                    return Ok(UsbConnection {
+                        device_handle: device_handle,
+                        state: AntennaState {
+                            antenna_id: None,
+                            pulse_mode: None,
+                            hf_mod: None,
+                            lf_mod: None,
+
+                            op_mode: None,
+                            act_mode: None,
+                            act_block_count: None,
+
+                            max_attempts: 200
+                        },
+                        response_message_buffer: vec![0; 1024 * 1024 * 64],
+                    });
                 }
-                
-                return Ok(UsbConnection {
-                    device_handle: device_handle,
-                    state: AntennaState {
-                        antenna_id: None,
-                        pulse_mode: None,
-                        hf_mod: None,
-                        lf_mod: None,
-
-                        op_mode: None,
-                        act_mode: None,
-                        act_block_count: None,
-
-                        max_attempts: 200
-                    }
-                });
             }
+
+            log::error!("No matching USB device found ...");
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
 
         return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No matching USB device found")));
@@ -183,7 +189,7 @@ impl<'a> UsbConnection<'a> {
      * 
      * @return transponders in the array
      */
-    pub fn get_inventory(self: & Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>, Box<dyn std::error::Error>> {
+    pub fn get_inventory(self: &mut Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>, Box<dyn std::error::Error>> {
         log::trace!("Requesting inventory ids ...");
         let inventory_request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, expect_device);
         let inventory_response = self.send_command(inventory_request)?;
@@ -330,8 +336,8 @@ impl<'a> UsbConnection<'a> {
 
             let addr = 0x09;
             let bl = &timer_mode_blocks.single_pulse_block;
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
-            log::debug!("Setting single_pulse_block: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+            log::info!("Setting single_pulse_block of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -341,10 +347,10 @@ impl<'a> UsbConnection<'a> {
                 }
             }
 
-            let addr = 0x10;
+            let addr = 0x0A;
             let bl = &timer_mode_blocks.hf_block;
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
-            log::debug!("Setting hf_block: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+            log::info!("Setting hf_block of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -354,10 +360,10 @@ impl<'a> UsbConnection<'a> {
                 }
             }
 
-            let addr = 0x11;
+            let addr = 0x0B;
             let bl = &timer_mode_blocks.lf_block;
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
-            log::debug!("Setting lf_block: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+            log::info!("Setting lf_block of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -374,8 +380,8 @@ impl<'a> UsbConnection<'a> {
 
             let addr = 0x01;
             let bl = &actuator_mode_blocks.block0_31;
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
-            log::debug!("Setting block0_31: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+            log::info!("Setting block0_31 of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -387,8 +393,8 @@ impl<'a> UsbConnection<'a> {
 
             let addr = 0x02;
             let bl = &actuator_mode_blocks.block32_63;
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
-            log::debug!("Setting block32_63: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+            log::info!("Setting block32_63 of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -400,8 +406,8 @@ impl<'a> UsbConnection<'a> {
 
             let addr = 0x03;
             let bl = &actuator_mode_blocks.block64_95;
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
-            log::debug!("Setting block64_95: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+            log::info!("Setting block64_95 of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -413,8 +419,8 @@ impl<'a> UsbConnection<'a> {
 
             let addr = 0x04;
             let bl = &actuator_mode_blocks.block96_127;
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b0, bl.b1, bl.b2, bl.b3];
-            log::debug!("Setting block96_127: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+            log::info!("Setting block96_127 of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -429,13 +435,13 @@ impl<'a> UsbConnection<'a> {
         if command.op_mode_block.is_some() {
             let addr = 0x00;
             let bl = command.op_mode_block.as_ref().unwrap();
-            let data: smallvec::SmallVec<[u8; 16]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, 0x00, bl.act_cnt32, bl.act_mode, bl.op_mode];
-            log::debug!("Setting op_mode_block: {}", hex::encode(&data));
+            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, 0x00, bl.act_cnt32, bl.act_mode, bl.op_mode];
+            log::info!("Setting op_mode_block of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
                 Err(err) => {
-                    log::error!("Failed to write actuators block for actuators command: {}", err);
+                    log::error!("Failed to write op block for actuators command: {}", err);
                     return Err(err);
                 }
             }
@@ -444,13 +450,12 @@ impl<'a> UsbConnection<'a> {
         Ok(())
     }
 
-    fn send_command(self: & Self, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
+    fn send_command(self: &mut Self, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
         // Marshal the serial command
         let mut serial_message = serial_message;
         let msg = serial_message.serialize();
 
         let mut attempts = 0;
-        let mut response_message_buffer = vec![0; 1024 * 1024 * 64]; // Max message size
         loop {
             // Documented not less than 5 milliseconds between messages
             std::thread::sleep(std::time::Duration::from_millis(6));
@@ -469,9 +474,9 @@ impl<'a> UsbConnection<'a> {
             // Read the response to the command
             attempts += 1;
             let response_message_size ;
-            match self.device_handle.read_bulk(129, &mut response_message_buffer, std::time::Duration::from_millis(5000)) {
+            match self.device_handle.read_bulk(129, self.response_message_buffer.as_mut_slice(), std::time::Duration::from_millis(5000)) {
                 Ok(bytes_read) => {
-                    log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&response_message_buffer[..bytes_read]));
+                    log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&self.response_message_buffer[..bytes_read]));
                     response_message_size = bytes_read;
                 },
                 Err(err) => {
@@ -482,7 +487,7 @@ impl<'a> UsbConnection<'a> {
             }
 
             // Interpret the response
-            let response = serial::advanced_protocol::ReaderToHost::deserialize(&response_message_buffer[..response_message_size])?;
+            let response = serial::advanced_protocol::ReaderToHost::deserialize(&self.response_message_buffer[..response_message_size])?;
             log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);
 
 

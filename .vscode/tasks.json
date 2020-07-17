@@ -25,6 +25,26 @@
 			],
 			"group": "test",
 			"label": "rust: cargo test"
+		},
+		{
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"test",
+				"--package",
+				"vr_actuators_cli",
+				"--test",
+				"tests",
+				"--",
+				"e2e_pulsing",
+				"--exact",
+				"--nocapture",
+			],
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "test",
+			"label": "test e2e"
 		}
 	]
 }
