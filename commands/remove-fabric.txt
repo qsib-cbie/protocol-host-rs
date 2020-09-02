@@ -1,0 +1,1 @@
+{ "RemoveFabric": { "fabric_name": "fabric0" } }

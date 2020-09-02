@@ -116,11 +116,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let commands = String::from(matches.value_of("commands").unwrap());
         let file = std::fs::File::open(commands)?;
         let reader = std::io::BufReader::new(file);
-        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<serde_json::Value>();
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<network::CommandMessage>();
         for command in stream {
             log::trace!("Found command: {:#?}", command);
-            let parsed_command = client.parse_command(command?).expect("Failed to parse command");
-            client.request(parsed_command)?
+            client.request_message(command?)?
         }
     } else {
         log::error!("Unknown command. Exiting ...");

@@ -1,0 +1,2 @@
+{ "SetRadioFreqPower": { "power_level": 8 } }
+{ "SystemReset": { } }

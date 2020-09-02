@@ -1,0 +1,1 @@
+{ "AddFabric": { "fabric_name": "fabric0" } }

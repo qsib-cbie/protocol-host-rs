@@ -167,7 +167,7 @@ impl<'a> UsbConnection<'a> {
                             act_mode: None,
                             act_block_count: None,
 
-                            max_attempts: 200
+                            max_attempts: 25
                         },
                         response_message_buffer: vec![0; 1024 * 1024 * 64],
                     });
@@ -296,6 +296,7 @@ impl<'a> UsbConnection<'a> {
             let error_message = format!("System reset failed with status code: {:?}.", status);
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
         } else {
+            self.device_handle.reset()?;
             Ok(())
         }
     }
@@ -315,7 +316,7 @@ impl<'a> UsbConnection<'a> {
         }
     }
 
-    pub fn actuators_command(self: &mut Self, uid: &[u8], command: &ActuatorsCommand)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: Option<TimerModeBlocks>, actuator_mode_blocks: Option<ActuatorModeBlocks>, op_mode_block: Option<OpModeBlock>)  -> Result<(), Box<dyn std::error::Error>> {
         log::trace!("Requesting write to actuators' configuration ...");
 
         if uid.len() != 8 {
@@ -331,8 +332,8 @@ impl<'a> UsbConnection<'a> {
         let db_size = 0x04;
 
         // Set the timer blocks first if present
-        if command.timer_mode_blocks.is_some() {
-            let timer_mode_blocks = command.timer_mode_blocks.as_ref().unwrap();
+        if timer_mode_blocks.is_some() {
+            let timer_mode_blocks = timer_mode_blocks.as_ref().unwrap();
 
             let addr = 0x09;
             let bl = &timer_mode_blocks.single_pulse_block;
@@ -375,8 +376,8 @@ impl<'a> UsbConnection<'a> {
         }
 
         // Set the actuator blocks next if present
-        if command.actuator_mode_blocks.is_some() {
-            let actuator_mode_blocks = command.actuator_mode_blocks.as_ref().unwrap();
+        if actuator_mode_blocks.is_some() {
+            let actuator_mode_blocks = actuator_mode_blocks.as_ref().unwrap();
 
             let addr = 0x01;
             let bl = &actuator_mode_blocks.block0_31;
@@ -432,9 +433,9 @@ impl<'a> UsbConnection<'a> {
         }
 
         // Set the mode block last
-        if command.op_mode_block.is_some() {
+        if op_mode_block.is_some() {
             let addr = 0x00;
-            let bl = command.op_mode_block.as_ref().unwrap();
+            let bl = op_mode_block.as_ref().unwrap();
             let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, 0x00, bl.act_cnt32, bl.act_mode, bl.op_mode];
             log::info!("Setting op_mode_block of {}: {:?}", hex::encode(uid), bl);
 
@@ -461,7 +462,7 @@ impl<'a> UsbConnection<'a> {
             std::thread::sleep(std::time::Duration::from_millis(6));
 
             // Send the command to the Feig reader
-            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(25)) {
+            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(50)) {
                 Ok(bytes_written) => {
                     log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
                 },

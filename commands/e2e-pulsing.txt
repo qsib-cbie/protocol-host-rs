@@ -1,0 +1,5 @@
+{ "ActuatorsCommand": {  
+    "fabric_name": "fabric0",
+    "op_mode_block": {"act_cnt32":2,"act_mode":0,"op_mode":2}, 
+    "actuator_mode_blocks": {"block0_31":{"b0":15,"b1":0,"b2":0,"b3":0},"block32_63":{"b0":0,"b1":0,"b2":0,"b3":0},"block64_95":{"b0":0,"b1":0,"b2":0,"b3":0},"block96_127":{"b0":0,"b1":0,"b2":0,"b3":0}},
+    "timer_mode_blocks": {"single_pulse_block":{"b0":0,"b1":0,"b2":0,"b3":0},"hf_block":{"b0":30,"b1":0,"b2":150,"b3":0},"lf_block":{"b0":255,"b1":255,"b2":255,"b3":255}} } }
