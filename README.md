@@ -10,15 +10,16 @@ This repo contains a Rust CLI for manipulating VR Actuators. This includes a dae
 
 ## Running
 
-
 ### Antenna Host
+
 The Feig Reader should be attached by USB to the host where we `start` a server. The command to start the antenna host may look like:
  ```bash
 cargo run --release -- -vv start --protocol tcp --hostname ubuntu20 --port 6001
  ```
  The antenna host accepts commands by listening on a DEALER socket acting as an async REP socket. The socket should be connected to a DEALER from a ROUTER:DEALER or another socket that will prepend the multipart message with an unused id (optionally empty).
 
- ### Remote Client
+### Remote Client
+
  The client that wishes to manipulate the host may do so via proxy. Using the cli, `command` the antenna host using a list of commands to execute see the `command --help` for more options. The client acts as a REQ socket but connects as a DEALER for optional async messaging.
 
  Clients are expected to wait for the response of the previous command but are not required to. The server will always process the commands in serial order, so the commands will still end up being queued if delayed. The following runs a list of commands that will change the radio frequency power to low power mode on the Feig Reader.
@@ -27,11 +28,12 @@ cargo run --release -- -vv command --protocol tcp --hostname ubuntu20 --port 600
  ```
 
 
- ### ZMQ Proxy
+### ZMQ Proxy
+
 There is expected to be a ZMQ proxy running on a public IP host for routing traffic. Following the REQ-REP broker example (rrbroker), there is a proxy running on a virtual machine (aliased as ubuntu20 in my `/etc/hosts`). The example `ubuntu20` virtual machine is running the ROUTER on port 6000 and DEALER on port 6001.
 
- ```rust
- impl RRBroker {
+```rust
+impl RRBroker {
     pub fn proxy(front_endpoint: &str, back_endpoint: &str) -> Result<(), CliError> {
         log::info!("Starting proxy for {} and {}", front_endpoint, back_endpoint);
 
@@ -46,15 +48,16 @@ There is expected to be a ZMQ proxy running on a public IP host for routing traf
 
         zmq::proxy(&frontend, &backend)?; // Never returns
     }
- }
+}
 ```
 
 To run your own router, clone and build the rust CLI at https://github.com/trueb2/zmq-cli-rs.git. You can run a proxy on your localhost with
+
 ```bash
 cd ~
 git clone https://github.com/trueb2/zmq-cli-rs.git
 cd zmq-cli-rs
-cargo run --release -- -vv start --routine rrbroker -1 tcp://0.0.0.0:6000 -2 tcp://0.0.0.0:6001 --socket-type proxy
+cargo run --release -- -vv start --routine rrbroker -1 tcp://0.0.0.0:6000 -2 tcp://0.0.0.0:6001 --socket-type proxy 
 ```
 
 
