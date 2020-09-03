@@ -101,12 +101,14 @@ pub struct UsbConnection<'a> {
     state: AntennaState,
     device_handle: libusb::DeviceHandle<'a>,
     response_message_buffer: std::vec::Vec<u8>,
+
+    usb_ctx: &'a libusb::Context,
 }
 
 #[derive(Debug)]
 pub struct AntennaState {
     /// A Usb Connection manipulates a Feig reader and an NFC antenna
-    
+
     antenna_id: Option<String>,
     pulse_mode: Option<i32>,
     hf_mod: Option<i32>,
@@ -136,7 +138,7 @@ impl<'a> UsbConnection<'a> {
                         device.address(),
                         device_desc.vendor_id(),
                         device_desc.product_id());
-                
+
                     let mut device_handle = device.open()?;
                     device_handle.reset()?;
                     for interface in device.active_config_descriptor()?.interfaces() {
@@ -154,7 +156,7 @@ impl<'a> UsbConnection<'a> {
                             }
                         }
                     }
-                    
+
                     return Ok(UsbConnection {
                         device_handle: device_handle,
                         state: AntennaState {
@@ -170,6 +172,7 @@ impl<'a> UsbConnection<'a> {
                             max_attempts: 25
                         },
                         response_message_buffer: vec![0; 1024 * 1024 * 64],
+                        usb_ctx: ctx,
                     });
                 }
             }
@@ -186,7 +189,7 @@ impl<'a> UsbConnection<'a> {
      * If the Reader has detected a new Transponder, that Transponder will be 
      * automatically set in the quiet state by the Reader. In this state the 
      * Transponder does not send back a response until the next inventory command.
-     * 
+     *
      * @return transponders in the array
      */
     pub fn get_inventory(self: &mut Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>, Box<dyn std::error::Error>> {
@@ -234,7 +237,7 @@ impl<'a> UsbConnection<'a> {
         /*
          * RF Power format: 0bX0111111
          * Supported Wattage is [Low Power] union [2W, 12W] in 0.25W steps
-         * 
+         *
          * If X is 1, then 0b00111111 is interpretting as 1/4 Watts.
          * Using 1/4 W, the boundaries are
          *   - 0x04 -> Low Power
@@ -262,7 +265,7 @@ impl<'a> UsbConnection<'a> {
             0x1, // CFG-N
             30, // Block Size  // IDK why we need the extra 16 zeros that don't map to the CFG block
             0x00, // MSB CFG-ADR
-            0x03, // LSB CFG-ADR 
+            0x03, // LSB CFG-ADR
             0x00,             // CFG-Data :: CFG3 Byte 0 TAG-DRV
             0x08,             // CFG-Data :: CFG3 Byte 1 TAG-DRV
             encoded_rf_power, // CFG-Data :: CFG3 Byte 2 RF-POWER
@@ -277,7 +280,7 @@ impl<'a> UsbConnection<'a> {
 
         let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0x8B, data.as_slice(), 0, false);
         let response = self.send_command(request)?;
-        log::info!("Received response: {:#?}", response);    
+        log::info!("Received response: {:#?}", response);
         if response.status == 0x11 {
             let error_message = "A reasonableness check failed while writing the RF power parameter to the reader" ;
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
@@ -296,7 +299,6 @@ impl<'a> UsbConnection<'a> {
             let error_message = format!("System reset failed with status code: {:?}.", status);
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
         } else {
-            self.device_handle.reset()?;
             Ok(())
         }
     }

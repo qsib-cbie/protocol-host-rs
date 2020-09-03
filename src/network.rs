@@ -25,7 +25,7 @@ impl NetworkContext {
             Err(err) => Err(err.into()),
         }
     }
-    
+
     pub fn _new(endpoint: String, socket_type_name: &str) -> Result<NetworkContext, zmq::Error> {
         let ctx = zmq::Context::new();
 
@@ -102,7 +102,7 @@ impl<'a> Server<'a> {
         })
     }
 
-    pub fn serve(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn serve(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
         log::info!("Beginning serve() loop ...");
 
         assert_eq!(self.ctx.net_ctx.socket_type_name, "REP_DEALER");
@@ -123,12 +123,24 @@ impl<'a> Server<'a> {
                     self.ctx.net_ctx.socket.send(vec![], zmq::SNDMORE)?;
                     self.ctx.net_ctx.socket.send(success.as_bytes(), 0)?;
 
-                    return Ok(());
+                    return Ok(false);
                 },
 
                 CommandMessage::SystemReset { } => {
                     log::info!("Received SystemReset.");
-                    self.conn.system_reset()
+                    let reset = self.conn.system_reset();
+
+                    log::info!("Waiting for Feig Reader to reboot after system reset ...");
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    log::info!("Done waiting for reboot. Trying to reset connection ...");
+
+                    let message = if reset.is_ok() { CommandMessage::Success{} } else { CommandMessage::Failure { message: String::from("Failed system reset") } };
+                    let message = serde_json::to_string(&message)?;
+                    self.ctx.net_ctx.socket.send(id, zmq::SNDMORE)?;
+                    self.ctx.net_ctx.socket.send(vec![], zmq::SNDMORE)?;
+                    self.ctx.net_ctx.socket.send(message.as_bytes(), 0)?;
+
+                    return Ok(true);
                 },
                 CommandMessage::SetRadioFreqPower { power_level } => {
                     log::info!("Received SetRadioFreqPower command for power_level {:?}.", power_level);
@@ -148,7 +160,7 @@ impl<'a> Server<'a> {
                     let decoded_data = hex::decode(&data)?;
                     self.conn.custom_command(control_byte, decoded_data.as_slice(), device_required)
                 },
-            
+
                 CommandMessage::AddFabric { fabric_name } => {
                     match vrp::Fabric::new(&mut self.conn, fabric_name.as_str()) {
                         Ok(fabric) => {
@@ -163,7 +175,7 @@ impl<'a> Server<'a> {
                             Err(err)
                         }
                     }
-             
+
                 },
                 CommandMessage::RemoveFabric { fabric_name } => {
                     match self.fabrics.binary_search_by(|fabric| fabric.name.cmp(&fabric_name)) {
@@ -183,28 +195,32 @@ impl<'a> Server<'a> {
                 CommandMessage::ActuatorsCommand { fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block } => {
                     log::info!("Received ActuatorsCommand: {:#?} {:#?} {:#?} {:#?}", fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block);
 
-                    let fabric_uid;
-                    match self.fabrics.binary_search_by(|fabric| fabric.name.cmp(&fabric_name)) {
+                    let fabric_uid= match self.fabrics.binary_search_by(|fabric| fabric.name.cmp(&fabric_name)) {
                         Ok(position) => {
                             let transponders = &self.fabrics[position].transponders;
                             log::trace!("Found transponders for actuator command: {:?}", transponders);
-            
+
                             if transponders.len() > 0 {
-                                fabric_uid = &transponders[0].uid;
+                                Ok(&transponders[0].uid)
                             } else {
                                 let message = format!("No UID for matching fabric: {:#?}", self.fabrics[position]);
                                 log::error!("{}", message.as_str());
-                                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+                                Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
                             }
                         },
-                        Err(err) => {
-                            let message = format!("No existing fabric to write actuator command: {}", err);
+                        Err(_) => {
+                            let message = format!("No existing fabric to write actuator command: {:?}", self.fabrics);
                             log::error!("{}", message.as_str());
-                            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+                            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
                         }
+                    };
+
+                    match fabric_uid {
+                        Ok(fabric_uid) => {
+                            self.conn.actuators_command(fabric_uid.as_slice(), timer_mode_blocks, actuator_mode_blocks, op_mode_block)
+                        },
+                        Err(err) => Err(err)
                     }
-            
-                    self.conn.actuators_command(fabric_uid.as_slice(), timer_mode_blocks, actuator_mode_blocks, op_mode_block)
                 },
 
                 other => {
@@ -294,5 +310,5 @@ pub enum CommandMessage {
     AddFabric { fabric_name: String },
     RemoveFabric { fabric_name: String },
     ActuatorsCommand { fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>},
-    
+
 }

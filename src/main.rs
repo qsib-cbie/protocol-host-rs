@@ -85,13 +85,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected a small integer for port");
 
-        let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
-        let server_context = network::ServerContext::new(endpoint)?;
         loop {
+            let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
+            let server_context = network::ServerContext::new(endpoint)?;
             let mut server = network::Server::new(&server_context).expect("Failed to initialize server");
             match server.serve() {
-                Ok(_) => {
+                Ok(reserve) => {
                     log::info!("Finished serving with Ok result.");
+                    if !reserve {
+                        return Ok(());
+                    }
                 },
                 Err(err) => {
                     log::error!("Encountered error: {}", err);
