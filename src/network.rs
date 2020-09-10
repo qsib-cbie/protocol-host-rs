@@ -1,10 +1,11 @@
 #[path = "vrp.rs"] mod vrp;
 
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
 #[allow(dead_code)]
 pub struct NetworkContext {
-    pub endpoint: String, 
+    pub endpoint: String,
 
     _ctx: zmq::Context,
     socket: zmq::Socket,
@@ -84,9 +85,9 @@ impl ServerContext {
 }
 
 pub struct Server<'a> {
-    ctx: &'a ServerContext,
+    ctx:  &'a ServerContext,
     conn: vrp::UsbConnection<'a>,
-    fabrics: std::vec::Vec<vrp::Fabric>,
+    fabrics: HashMap<String, vrp::Fabric>,
 }
 
 pub struct Client {
@@ -98,7 +99,7 @@ impl<'a> Server<'a> {
         Ok(Server {
             ctx,
             conn: vrp::UsbConnection::new(&ctx.usb_ctx)?,
-            fabrics: std::vec::Vec::new(),
+            fabrics: HashMap::new(),
         })
     }
 
@@ -109,14 +110,14 @@ impl<'a> Server<'a> {
         loop {
             // Receive a message
             let id = self.ctx.net_ctx.socket.recv_bytes(0)?; // Simulated REP: Connection Identity
-            let _ = self.ctx.net_ctx.socket.recv_bytes(0)?;           // Simulated REP: Empty Frame 
+            let _ = self.ctx.net_ctx.socket.recv_bytes(0)?;           // Simulated REP: Empty Frame
             let msg = self.ctx.net_ctx.socket.recv_bytes(0)?;// Simulated REP: Message Content
 
             // Handle the message
             let request_message = serde_json::from_slice(msg.as_slice())?;
             let result: Result<(), Box<dyn std::error::Error>> = match request_message {
                 CommandMessage::Stop{} => {
-                    log::info!("Received Stop.");
+                    log::debug!("Received Stop.");
 
                     let success = serde_json::to_string(&CommandMessage::Success {})?;
                     self.ctx.net_ctx.socket.send(id, zmq::SNDMORE)?;
@@ -127,11 +128,11 @@ impl<'a> Server<'a> {
                 },
 
                 CommandMessage::SystemReset { } => {
-                    log::info!("Received SystemReset.");
+                    log::debug!("Received SystemReset.");
                     let reset = self.conn.system_reset();
 
                     log::info!("Waiting for Feig Reader to reboot after system reset ...");
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
                     log::info!("Done waiting for reboot. Trying to reset connection ...");
 
                     let message = if reset.is_ok() { CommandMessage::Success{} } else { CommandMessage::Failure { message: String::from("Failed system reset") } };
@@ -143,7 +144,7 @@ impl<'a> Server<'a> {
                     return Ok(true);
                 },
                 CommandMessage::SetRadioFreqPower { power_level } => {
-                    log::info!("Received SetRadioFreqPower command for power_level {:?}.", power_level);
+                    log::debug!("Received SetRadioFreqPower command for power_level {:?}.", power_level);
                     match power_level {
                         pl if pl == 0 || (pl >= 2 && pl <= 12) => {
                             self.conn.set_radio_freq_power(power_level)
@@ -156,7 +157,7 @@ impl<'a> Server<'a> {
                     }
                 },
                 CommandMessage::CustomCommand { control_byte, data, device_required } => {
-                    log::info!("Received Custom command with control_byte {} and data {}", hex::encode(vec![control_byte]), hex::encode(data.as_bytes()));
+                    log::debug!("Received Custom command with control_byte {} and data {}", hex::encode(vec![control_byte]), hex::encode(data.as_bytes()));
                     let decoded_data = hex::decode(&data)?;
                     self.conn.custom_command(control_byte, decoded_data.as_slice(), device_required)
                 },
@@ -164,8 +165,8 @@ impl<'a> Server<'a> {
                 CommandMessage::AddFabric { fabric_name } => {
                     match vrp::Fabric::new(&mut self.conn, fabric_name.as_str()) {
                         Ok(fabric) => {
-                            self.fabrics.push(fabric);
-                            self.fabrics.sort_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
+                            self.fabrics.insert(fabric_name, fabric);
+
                             log::info!("Added new fabric to command for AddFabric command");
                             log::trace!("Active Fabrics: {:#?}", self.fabrics);
                             Ok(())
@@ -178,50 +179,27 @@ impl<'a> Server<'a> {
 
                 },
                 CommandMessage::RemoveFabric { fabric_name } => {
-                    match self.fabrics.binary_search_by(|fabric| fabric.name.cmp(&fabric_name)) {
-                        Ok(position) => {
-                            self.fabrics.remove(position);
+                    match self.fabrics.remove(&fabric_name) {
+                        Some(fabric) => {
                             log::info!("Removed existing fabric to command for AddFabric command");
                             log::trace!("Active Fabrics:  {:#?}", self.fabrics);
+                            log::trace!("Removed Fabric:  {:#?}", fabric);
                             Ok(())
                         },
-                        Err(err) => {
-                            let message = format!("No existing fabric to remove for RemoveFabric command: {}", err);
+                        None => {
+                            let message = format!("No existing fabric to remove for RemoveFabric command");
                             log::error!("{}", message.as_str());
                             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
                         }
                     }
                 },
-                CommandMessage::ActuatorsCommand { fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block } => {
-                    log::info!("Received ActuatorsCommand: {:#?} {:#?} {:#?} {:#?}", fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block);
-
-                    let fabric_uid= match self.fabrics.binary_search_by(|fabric| fabric.name.cmp(&fabric_name)) {
-                        Ok(position) => {
-                            let transponders = &self.fabrics[position].transponders;
-                            log::trace!("Found transponders for actuator command: {:?}", transponders);
-
-                            if transponders.len() > 0 {
-                                Ok(&transponders[0].uid)
-                            } else {
-                                let message = format!("No UID for matching fabric: {:#?}", self.fabrics[position]);
-                                log::error!("{}", message.as_str());
-                                Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
-                            }
-                        },
-                        Err(_) => {
-                            let message = format!("No existing fabric to write actuator command: {:?}", self.fabrics);
-                            log::error!("{}", message.as_str());
-                            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
-                        }
-                    };
-
-                    match fabric_uid {
-                        Ok(fabric_uid) => {
-                            self.conn.actuators_command(fabric_uid.as_slice(), timer_mode_blocks, actuator_mode_blocks, op_mode_block)
-                        },
-                        Err(err) => Err(err)
-                    }
+                CommandMessage::ActuatorsCommand { fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block, use_cache } => {
+                    log::debug!("Received ActuatorsCommand: {:#?} {:#?} {:#?} {:#?}", fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block);
+                    self.handle_actuators_command(fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block, use_cache)
                 },
+                CommandMessage::Success { } => {
+                    Ok(())
+                }
 
                 other => {
                     let failure_message = String::from(format!("Unhandled CommandMessage request: {:#?}", other));
@@ -253,6 +231,68 @@ impl<'a> Server<'a> {
     pub fn get_last_endpoint(self: &Self) -> String {
         self.ctx.net_ctx.socket.get_last_endpoint().unwrap().unwrap()
     }
+
+    fn handle_actuators_command(self: &mut Self, fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>, use_cache: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
+        let fabric = match self.fabrics.get_mut(&fabric_name) {
+            Some(fabric) => {
+                log::trace!("Found transponder for actuator command: {:?}", fabric.transponders);
+                fabric
+            },
+            None => {
+                let message = format!("No existing fabric to write actuator command: {:?}", self.fabrics);
+                log::error!("{}", message);
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())));
+            }
+        };
+
+        let fabric_uid = match fabric.transponders.len() {
+            t_idx if t_idx > 0 => {
+                &fabric.transponders[0].uid
+            },
+            _ => {
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No transponder UID found for fabric")));
+            }
+        };
+
+        let mut actuators_command = vrp::ActuatorsCommand {
+            fabric_name: fabric_name.clone(),
+            timer_mode_blocks: timer_mode_blocks.clone(),
+            actuator_mode_blocks: actuator_mode_blocks.clone(),
+            op_mode_block: op_mode_block.clone(),
+            use_cache: use_cache.clone(),
+        };
+
+        let actuators_command = match use_cache {
+            Some(flag)  => {
+                if flag {
+                    if fabric.state.state.use_cache.unwrap() {
+                        actuators_command = fabric.state.diff(actuators_command);
+                        log::debug!("Writing using cached diff: {:#?}", &actuators_command);
+                    } else {
+                        log::debug!("Skipping cached diff to warm cache");
+                    }
+                } else {
+                    log::debug!("Command electing to bypass cache");
+                }
+                actuators_command
+            },
+            _ => {
+                if fabric.state.state.use_cache.unwrap() {
+                    actuators_command = fabric.state.diff(actuators_command);
+                    log::debug!("Writing using cached diff: {:#?}", &actuators_command);
+                } else {
+                    log::debug!("Skipping cached diff to warm cache");
+                }
+                actuators_command
+            }
+        };
+
+        let result = self.conn.actuators_command(fabric_uid.as_slice(), &actuators_command.timer_mode_blocks, &actuators_command.actuator_mode_blocks, &actuators_command.op_mode_block);
+        if result.is_ok() {
+            fabric.state.apply(actuators_command);
+        }
+        result
+    }
 }
 
 impl Client {
@@ -279,7 +319,7 @@ impl Client {
 
         // Receive Confirmation
         let _ = self.net_ctx.socket.recv_bytes(0)?;             // Simulated REQ: Empty Frame
-        let resp = self.net_ctx.socket.recv_bytes(0)?; // Simulated REQ: Message Content 
+        let resp = self.net_ctx.socket.recv_bytes(0)?; // Simulated REQ: Message Content
 
         // Confirm Response
         let response_message = serde_json::from_slice(resp.as_slice())?;
@@ -309,6 +349,6 @@ pub enum CommandMessage {
 
     AddFabric { fabric_name: String },
     RemoveFabric { fabric_name: String },
-    ActuatorsCommand { fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>},
+    ActuatorsCommand { fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>, use_cache: Option<bool>},
 
 }

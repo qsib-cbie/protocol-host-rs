@@ -21,14 +21,14 @@ pub struct CustomCommand {
     pub device_required: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OpModeBlock {
     pub act_cnt32: u8,
     pub act_mode: u8,
     pub op_mode: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub struct ActuatorModeBlock {
     pub b0: u8,
     pub b1: u8,
@@ -36,15 +36,15 @@ pub struct ActuatorModeBlock {
     pub b3: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct ActuatorModeBlocks {
-    pub block0_31: ActuatorModeBlock,
-    pub block32_63: ActuatorModeBlock,
-    pub block64_95: ActuatorModeBlock,
-    pub block96_127: ActuatorModeBlock,
+    pub block0_31: Option<ActuatorModeBlock>,
+    pub block32_63: Option<ActuatorModeBlock>,
+    pub block64_95: Option<ActuatorModeBlock>,
+    pub block96_127: Option<ActuatorModeBlock>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub struct TimerModeBlock {
     pub b0: u8,
     pub b1: u8,
@@ -52,11 +52,11 @@ pub struct TimerModeBlock {
     pub b3: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct TimerModeBlocks {
-    pub single_pulse_block: TimerModeBlock,
-    pub hf_block: TimerModeBlock,
-    pub lf_block: TimerModeBlock,
+    pub single_pulse_block: Option<TimerModeBlock>,
+    pub hf_block: Option<TimerModeBlock>,
+    pub lf_block: Option<TimerModeBlock>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -65,13 +65,96 @@ pub struct ActuatorsCommand {
     pub op_mode_block: Option<OpModeBlock>,
     pub actuator_mode_blocks: Option<ActuatorModeBlocks>,
     pub timer_mode_blocks: Option<TimerModeBlocks>,
+    pub use_cache: Option<bool>,
 }
 
+pub struct FabricState {
+    pub state: ActuatorsCommand,
+}
+
+impl FabricState {
+    pub fn new(fabric_name: &str) -> Self {
+        Self {
+            state: ActuatorsCommand {
+                fabric_name: String::from(fabric_name),
+                op_mode_block: Some(OpModeBlock { act_cnt32: 0, act_mode: 0, op_mode: 0 }),
+                actuator_mode_blocks: Some(ActuatorModeBlocks {
+                    block0_31: Some(ActuatorModeBlock { b0: 0, b1: 0, b2: 0, b3: 0}),
+                    block32_63: Some(ActuatorModeBlock { b0: 0, b1: 0, b2: 0, b3: 0}),
+                    block64_95: Some(ActuatorModeBlock { b0: 0, b1: 0, b2: 0, b3: 0}),
+                    block96_127: Some(ActuatorModeBlock { b0: 0, b1: 0, b2: 0, b3: 0}),
+                }),
+                timer_mode_blocks: Some(TimerModeBlocks {
+                    single_pulse_block: Some(TimerModeBlock { b0: 0, b1: 0, b2: 0, b3: 0}),
+                    hf_block: Some(TimerModeBlock { b0: 0, b1: 0, b2: 0, b3: 0}),
+                    lf_block: Some(TimerModeBlock { b0: 0, b1: 0, b2: 0, b3: 0}),
+                }),
+                use_cache: Some(false),
+            }
+        }
+    }
+
+    // Return the minimum acutator command to update the state to the new actuators command
+    pub fn diff(self: &Self, new_state: ActuatorsCommand) -> ActuatorsCommand {
+        let new_actuator_blocks = &new_state.actuator_mode_blocks.unwrap_or(self.state.actuator_mode_blocks.clone().unwrap());
+        let curr_actuator_blocks = self.state.actuator_mode_blocks.as_ref().unwrap();
+
+        let new_timer_blocks = &new_state.timer_mode_blocks.unwrap_or(self.state.timer_mode_blocks.clone().unwrap());
+        let curr_timer_blocks = self.state.timer_mode_blocks.as_ref().unwrap();
+
+        ActuatorsCommand {
+            fabric_name: self.state.fabric_name.clone(),
+            op_mode_block: new_state.op_mode_block,
+            actuator_mode_blocks: Some(ActuatorModeBlocks {
+                block0_31: if new_actuator_blocks.block0_31.is_some() && curr_actuator_blocks.block0_31 != new_actuator_blocks.block0_31 { new_actuator_blocks.block0_31.clone() } else { None },
+                block32_63: if new_actuator_blocks.block32_63.is_some() && curr_actuator_blocks.block32_63 != new_actuator_blocks.block32_63 { new_actuator_blocks.block32_63.clone() } else { None },
+                block64_95: if new_actuator_blocks.block64_95.is_some() && curr_actuator_blocks.block64_95 != new_actuator_blocks.block64_95 { new_actuator_blocks.block64_95.clone() } else { None },
+                block96_127: if new_actuator_blocks.block96_127.is_some() && curr_actuator_blocks.block96_127 != new_actuator_blocks.block96_127 { new_actuator_blocks.block96_127.clone() } else { None },
+            }),
+            timer_mode_blocks: Some(TimerModeBlocks {
+                single_pulse_block: if new_timer_blocks.single_pulse_block.is_some() && curr_timer_blocks.single_pulse_block != new_timer_blocks.single_pulse_block { new_timer_blocks.single_pulse_block.clone() } else { None },
+                hf_block: if new_timer_blocks.hf_block.is_some() && curr_timer_blocks.hf_block != new_timer_blocks.hf_block { new_timer_blocks.hf_block.clone() } else { None },
+                lf_block: if new_timer_blocks.lf_block.is_some() && curr_timer_blocks.lf_block != new_timer_blocks.lf_block { new_timer_blocks.lf_block.clone() } else { None },
+            }),
+            use_cache: self.state.use_cache,
+        }
+    }
+
+    // Update the state of the fabric with the new state
+    pub fn apply(self: &mut Self, new_state: ActuatorsCommand) {
+        let diff = self.diff(new_state);
+
+        let new_actuator_blocks = &diff.actuator_mode_blocks.unwrap_or(self.state.actuator_mode_blocks.clone().unwrap());
+        let curr_actuator_blocks = self.state.actuator_mode_blocks.as_ref().unwrap();
+
+        let new_timer_blocks = &diff.timer_mode_blocks.unwrap_or(self.state.timer_mode_blocks.clone().unwrap());
+        let curr_timer_blocks = self.state.timer_mode_blocks.as_ref().unwrap();
+
+
+        self.state = ActuatorsCommand {
+            fabric_name: self.state.fabric_name.clone(),
+            op_mode_block: diff.op_mode_block,
+            actuator_mode_blocks: Some(ActuatorModeBlocks {
+                block0_31: if new_actuator_blocks.block0_31.is_some() { new_actuator_blocks.block0_31.clone() } else { curr_actuator_blocks.block0_31.clone() },
+                block32_63: if new_actuator_blocks.block32_63.is_some() { new_actuator_blocks.block32_63.clone() } else { curr_actuator_blocks.block32_63.clone() },
+                block64_95: if new_actuator_blocks.block64_95.is_some() { new_actuator_blocks.block64_95.clone() } else { curr_actuator_blocks.block64_95.clone() },
+                block96_127: if new_actuator_blocks.block96_127.is_some() { new_actuator_blocks.block96_127.clone() } else { curr_actuator_blocks.block96_127.clone() },
+            }),
+            timer_mode_blocks: Some(TimerModeBlocks {
+                single_pulse_block: if new_timer_blocks.single_pulse_block.is_some() { new_timer_blocks.single_pulse_block.clone() } else { curr_timer_blocks.single_pulse_block.clone() },
+                hf_block: if new_timer_blocks.hf_block.is_some() { new_timer_blocks.hf_block.clone() } else { curr_timer_blocks.hf_block.clone() },
+                lf_block: if new_timer_blocks.lf_block.is_some() { new_timer_blocks.lf_block.clone() } else { curr_timer_blocks.lf_block.clone() },
+            }),
+            use_cache: Some(true), // Use the cache once the cache starts applying on top of its own state
+        };
+    }
+}
 
 pub struct Fabric {
     // A set of VR Actuator Blocks that are to be considered 1 unit
     pub name: String,
     pub transponders: smallvec::SmallVec<[ObidTransponder; 2]>,
+    pub state: FabricState,
 }
 
 impl std::fmt::Debug for Fabric {
@@ -86,6 +169,7 @@ impl Fabric {
         let mut fabric = Fabric {
             name: String::from(name),
             transponders: smallvec::smallvec![],
+            state: FabricState::new(name),
         };
 
         fabric.transponders = conn.get_inventory(true)?;
@@ -149,7 +233,7 @@ impl<'a> UsbConnection<'a> {
                         }
                         log::debug!("Claiming interface: {}", interface_number);
                         device_handle.claim_interface(interface_number)?;
-                        for interface_descriptor in interface.descriptors() {
+                         for interface_descriptor in interface.descriptors() {
                             log::trace!("Interface Descriptor of {}: {:#?}", interface_number, interface_descriptor);
                             for endpoint_descriptor in interface_descriptor.endpoint_descriptors() {
                                 log::trace!("Endpoint Descriptor of {}: {:#?}", interface_number, endpoint_descriptor);
@@ -169,7 +253,7 @@ impl<'a> UsbConnection<'a> {
                             act_mode: None,
                             act_block_count: None,
 
-                            max_attempts: 25
+                            max_attempts: 10
                         },
                         response_message_buffer: vec![0; 1024 * 1024 * 64],
                         usb_ctx: ctx,
@@ -196,7 +280,7 @@ impl<'a> UsbConnection<'a> {
         log::trace!("Requesting inventory ids ...");
         let inventory_request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, expect_device);
         let inventory_response = self.send_command(inventory_request)?;
-        log::info!("Received inventory_response: {:#?}", inventory_response);
+        log::debug!("Received inventory_response: {:#?}", inventory_response);
 
         if inventory_response.status == 0 && inventory_response.data.len() > 0 {
             let mut transponders = smallvec::smallvec![];
@@ -280,7 +364,7 @@ impl<'a> UsbConnection<'a> {
 
         let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0x8B, data.as_slice(), 0, false);
         let response = self.send_command(request)?;
-        log::info!("Received response: {:#?}", response);
+        log::debug!("Received response: {:#?}", response);
         if response.status == 0x11 {
             let error_message = "A reasonableness check failed while writing the RF power parameter to the reader" ;
             Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
@@ -318,7 +402,7 @@ impl<'a> UsbConnection<'a> {
         }
     }
 
-    pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: Option<TimerModeBlocks>, actuator_mode_blocks: Option<ActuatorModeBlocks>, op_mode_block: Option<OpModeBlock>)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: &Option<TimerModeBlocks>, actuator_mode_blocks: &Option<ActuatorModeBlocks>, op_mode_block: &Option<OpModeBlock>)  -> Result<(), Box<dyn std::error::Error>> {
         log::trace!("Requesting write to actuators' configuration ...");
 
         if uid.len() != 8 {
@@ -339,40 +423,49 @@ impl<'a> UsbConnection<'a> {
 
             let addr = 0x09;
             let bl = &timer_mode_blocks.single_pulse_block;
-            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
-            log::info!("Setting single_pulse_block of {}: {:?}", hex::encode(uid), bl);
+            if bl.is_some() {
+                let bl = bl.as_ref().unwrap();
+                let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+                log::debug!("Setting single_pulse_block of {}: {:?}", hex::encode(uid), bl);
 
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => { },
-                Err(err) => {
-                    log::error!("Failed to write timer block for actuators command: {}", err);
-                    return Err(err);
+                match self.custom_command(control_byte, data.as_slice(), true) {
+                    Ok(_) => { },
+                    Err(err) => {
+                        log::error!("Failed to write timer block for actuators command: {}", err);
+                        return Err(err);
+                    }
                 }
             }
 
             let addr = 0x0A;
             let bl = &timer_mode_blocks.hf_block;
-            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
-            log::info!("Setting hf_block of {}: {:?}", hex::encode(uid), bl);
+            if bl.is_some() {
+                let bl = bl.as_ref().unwrap();
+                let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+                log::debug!("Setting hf_block of {}: {:?}", hex::encode(uid), bl);
 
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => { },
-                Err(err) => {
-                    log::error!("Failed to write timer block for actuators command: {}", err);
-                    return Err(err);
+                match self.custom_command(control_byte, data.as_slice(), true) {
+                    Ok(_) => { },
+                    Err(err) => {
+                        log::error!("Failed to write timer block for actuators command: {}", err);
+                        return Err(err);
+                    }
                 }
             }
 
             let addr = 0x0B;
             let bl = &timer_mode_blocks.lf_block;
-            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
-            log::info!("Setting lf_block of {}: {:?}", hex::encode(uid), bl);
+            if bl.is_some() {
+                let bl = bl.as_ref().unwrap();
+                let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+                log::debug!("Setting lf_block of {}: {:?}", hex::encode(uid), bl);
 
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => { },
-                Err(err) => {
-                    log::error!("Failed to write timer block for actuators command: {}", err);
-                    return Err(err);
+                match self.custom_command(control_byte, data.as_slice(), true) {
+                    Ok(_) => { },
+                    Err(err) => {
+                        log::error!("Failed to write timer block for actuators command: {}", err);
+                        return Err(err);
+                    }
                 }
             }
         }
@@ -383,53 +476,65 @@ impl<'a> UsbConnection<'a> {
 
             let addr = 0x01;
             let bl = &actuator_mode_blocks.block0_31;
-            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
-            log::info!("Setting block0_31 of {}: {:?}", hex::encode(uid), bl);
+            if bl.is_some() {
+                let bl = bl.as_ref().unwrap();
+                let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+                log::debug!("Setting block0_31 of {}: {:?}", hex::encode(uid), bl);
 
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => { },
-                Err(err) => {
-                    log::error!("Failed to write actuators block for actuators command: {}", err);
-                    return Err(err);
+                match self.custom_command(control_byte, data.as_slice(), true) {
+                    Ok(_) => { },
+                    Err(err) => {
+                        log::error!("Failed to write actuators block for actuators command: {}", err);
+                        return Err(err);
+                    }
                 }
             }
 
             let addr = 0x02;
             let bl = &actuator_mode_blocks.block32_63;
-            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
-            log::info!("Setting block32_63 of {}: {:?}", hex::encode(uid), bl);
+            if bl.is_some() {
+                let bl = bl.as_ref().unwrap();
+                let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+                log::debug!("Setting block32_63 of {}: {:?}", hex::encode(uid), bl);
 
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => { },
-                Err(err) => {
-                    log::error!("Failed to write actuators block for actuators command: {}", err);
-                    return Err(err);
+                match self.custom_command(control_byte, data.as_slice(), true) {
+                    Ok(_) => { },
+                    Err(err) => {
+                        log::error!("Failed to write actuators block for actuators command: {}", err);
+                        return Err(err);
+                    }
                 }
             }
 
             let addr = 0x03;
             let bl = &actuator_mode_blocks.block64_95;
-            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
-            log::info!("Setting block64_95 of {}: {:?}", hex::encode(uid), bl);
+            if bl.is_some() {
+                let bl = bl.as_ref().unwrap();
+                let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+                log::debug!("Setting block64_95 of {}: {:?}", hex::encode(uid), bl);
 
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => { },
-                Err(err) => {
-                    log::error!("Failed to write actuators block for actuators command: {}", err);
-                    return Err(err);
+                match self.custom_command(control_byte, data.as_slice(), true) {
+                    Ok(_) => { },
+                    Err(err) => {
+                        log::error!("Failed to write actuators block for actuators command: {}", err);
+                        return Err(err);
+                    }
                 }
             }
 
             let addr = 0x04;
             let bl = &actuator_mode_blocks.block96_127;
-            let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
-            log::info!("Setting block96_127 of {}: {:?}", hex::encode(uid), bl);
+            if bl.is_some() {
+                let bl = bl.as_ref().unwrap();
+                let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
+                log::debug!("Setting block96_127 of {}: {:?}", hex::encode(uid), bl);
 
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => { },
-                Err(err) => {
-                    log::error!("Failed to write actuators block for actuators command: {}", err);
-                    return Err(err);
+                match self.custom_command(control_byte, data.as_slice(), true) {
+                    Ok(_) => { },
+                    Err(err) => {
+                        log::error!("Failed to write actuators block for actuators command: {}", err);
+                        return Err(err);
+                    }
                 }
             }
         }
@@ -439,7 +544,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x00;
             let bl = op_mode_block.as_ref().unwrap();
             let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, 0x00, bl.act_cnt32, bl.act_mode, bl.op_mode];
-            log::info!("Setting op_mode_block of {}: {:?}", hex::encode(uid), bl);
+            log::debug!("Setting op_mode_block of {}: {:?}", hex::encode(uid), bl);
 
             match self.custom_command(control_byte, data.as_slice(), true) {
                 Ok(_) => { },
@@ -464,7 +569,7 @@ impl<'a> UsbConnection<'a> {
             std::thread::sleep(std::time::Duration::from_millis(6));
 
             // Send the command to the Feig reader
-            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(50)) {
+            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(25)) {
                 Ok(bytes_written) => {
                     log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
                 },
@@ -485,7 +590,6 @@ impl<'a> UsbConnection<'a> {
                 Err(err) => {
                     log::error!("Failed Serial Command Read: {}", err.to_string());
                     continue
-                    // return Err(Box::new(err));
                 }
             }
 
@@ -508,14 +612,12 @@ impl<'a> UsbConnection<'a> {
             } else if serial_message.device_required && status == obid::Status::NoTransponder {
                 log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
                 if attempts >= self.state.max_attempts {
-                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in sensor")));
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in antenna")));
                 } else {
                     std::thread::sleep(std::time::Duration::from_millis(8 * attempts as u64));
                     continue;
                 }
             }
-
-            // std::thread::sleep(std::time::Duration::from_millis(1000));
 
             // All done
             return Ok(response);
