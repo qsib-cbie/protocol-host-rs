@@ -253,7 +253,7 @@ impl<'a> UsbConnection<'a> {
                             act_mode: None,
                             act_block_count: None,
 
-                            max_attempts: 10
+                            max_attempts: 5
                         },
                         response_message_buffer: vec![0; 1024 * 1024 * 64],
                         usb_ctx: ctx,
@@ -270,8 +270,8 @@ impl<'a> UsbConnection<'a> {
 
    /**
      * This command reads the UID of all Transponders inside the antenna field.
-     * If the Reader has detected a new Transponder, that Transponder will be 
-     * automatically set in the quiet state by the Reader. In this state the 
+     * If the Reader has detected a new Transponder, that Transponder will be
+     * automatically set in the quiet state by the Reader. In this state the
      * Transponder does not send back a response until the next inventory command.
      *
      * @return transponders in the array
@@ -416,6 +416,7 @@ impl<'a> UsbConnection<'a> {
         let _bank = 0x00; // this option is not used ?!
         let db_n = 0x01;
         let db_size = 0x04;
+        let mut wrote_block = false;
 
         // Set the timer blocks first if present
         if timer_mode_blocks.is_some() {
@@ -424,6 +425,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x09;
             let bl = &timer_mode_blocks.single_pulse_block;
             if bl.is_some() {
+                wrote_block = true;
                 let bl = bl.as_ref().unwrap();
                 let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
                 log::debug!("Setting single_pulse_block of {}: {:?}", hex::encode(uid), bl);
@@ -440,6 +442,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x0A;
             let bl = &timer_mode_blocks.hf_block;
             if bl.is_some() {
+                wrote_block = true;
                 let bl = bl.as_ref().unwrap();
                 let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
                 log::debug!("Setting hf_block of {}: {:?}", hex::encode(uid), bl);
@@ -456,6 +459,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x0B;
             let bl = &timer_mode_blocks.lf_block;
             if bl.is_some() {
+                wrote_block = true;
                 let bl = bl.as_ref().unwrap();
                 let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
                 log::debug!("Setting lf_block of {}: {:?}", hex::encode(uid), bl);
@@ -477,6 +481,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x01;
             let bl = &actuator_mode_blocks.block0_31;
             if bl.is_some() {
+                wrote_block = true;
                 let bl = bl.as_ref().unwrap();
                 let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
                 log::debug!("Setting block0_31 of {}: {:?}", hex::encode(uid), bl);
@@ -493,6 +498,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x02;
             let bl = &actuator_mode_blocks.block32_63;
             if bl.is_some() {
+                wrote_block = true;
                 let bl = bl.as_ref().unwrap();
                 let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
                 log::debug!("Setting block32_63 of {}: {:?}", hex::encode(uid), bl);
@@ -509,6 +515,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x03;
             let bl = &actuator_mode_blocks.block64_95;
             if bl.is_some() {
+                wrote_block = true;
                 let bl = bl.as_ref().unwrap();
                 let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
                 log::debug!("Setting block64_95 of {}: {:?}", hex::encode(uid), bl);
@@ -525,6 +532,7 @@ impl<'a> UsbConnection<'a> {
             let addr = 0x04;
             let bl = &actuator_mode_blocks.block96_127;
             if bl.is_some() {
+                wrote_block = true;
                 let bl = bl.as_ref().unwrap();
                 let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, bl.b3, bl.b2, bl.b1, bl.b0];
                 log::debug!("Setting block96_127 of {}: {:?}", hex::encode(uid), bl);
@@ -540,7 +548,7 @@ impl<'a> UsbConnection<'a> {
         }
 
         // Set the mode block last
-        if op_mode_block.is_some() {
+        if op_mode_block.is_some() && wrote_block {
             let addr = 0x00;
             let bl = op_mode_block.as_ref().unwrap();
             let data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size, 0x00, bl.act_cnt32, bl.act_mode, bl.op_mode];
@@ -569,7 +577,7 @@ impl<'a> UsbConnection<'a> {
             std::thread::sleep(std::time::Duration::from_millis(6));
 
             // Send the command to the Feig reader
-            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(25)) {
+            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(50)) {
                 Ok(bytes_written) => {
                     log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
                 },
