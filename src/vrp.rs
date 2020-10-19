@@ -164,7 +164,7 @@ impl std::fmt::Debug for Fabric {
 
 }
 
-impl Fabric {
+impl Fabric {//switch passed arg to protocol?
     pub fn new(conn: &mut UsbConnection, name: &str) -> Result<Fabric, Box<dyn std::error::Error>> {
         let mut fabric = Fabric {
             name: String::from(name),
@@ -180,6 +180,13 @@ impl Fabric {
 
 /// Feig-based Connections are documented here
 /// http://www.sebeto.com/intranet/ftpscambio/RFID_FEIG/Readers/ID%20ISC%20LR2500/Documentation/H01112-0e-ID-B.pdf
+
+pub trait Connection<'a> {
+    fn new(ctx: &'a libusb::Context) -> Self where Self: Sized;
+    //To be added...
+    // fn message(self: &mut Self, msg_to_send: &[u8]) -> Result<std::vec::Vec<u8>,()> ;
+    // fn reset(self: &mut Self) -> Result<(),()>;
+}
 
 pub struct UsbConnection<'a> {
     state: AntennaState,
@@ -205,8 +212,15 @@ pub struct AntennaState {
     max_attempts: i32,
 }
 
-impl<'a> UsbConnection<'a> {
-    pub fn new(ctx: &'a libusb::Context) -> Result<UsbConnection<'a>, Box<dyn std::error::Error>> {
+impl<'a> Connection<'a> for UsbConnection<'a> {
+    fn new(ctx: &'a libusb::Context) -> UsbConnection<'a> {
+        let usbconn = UsbConnection::getConnection(ctx)?;
+        return usbconn;
+    }
+}
+
+impl<'a> UsbConnection<'a>{
+    fn getConnection(ctx: &'a libusb::Context) -> Result<UsbConnection<'a>, Box<dyn std::error::Error>> {
         for _ in 0..10 {
             for device in ctx.devices()?.iter() {
                 let device_desc = device.device_descriptor()?;
@@ -240,7 +254,7 @@ impl<'a> UsbConnection<'a> {
                             }
                         }
                     }
-
+                    
                     return Ok(UsbConnection {
                         device_handle: device_handle,
                         state: AntennaState {
@@ -268,6 +282,84 @@ impl<'a> UsbConnection<'a> {
         return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No matching USB device found")));
     }
 
+    fn send_command(self: &mut Self, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
+        // Marshal the serial command
+        let mut serial_message = serial_message;
+        let msg = serial_message.serialize();
+
+        let mut attempts = 0;
+        loop {
+            // Documented not less than 5 milliseconds between messages
+            std::thread::sleep(std::time::Duration::from_millis(6));
+
+            // Send the command to the Feig reader
+            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(50)) {
+                Ok(bytes_written) => {
+                    log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
+                },
+                Err(err) => {
+                    log::error!("Failed Serial Command Send: {}", err.to_string());
+                    return Err(Box::new(err));
+                }
+            }
+
+            // Read the response to the command
+            attempts += 1;
+            let response_message_size ;
+            match self.device_handle.read_bulk(129, self.response_message_buffer.as_mut_slice(), std::time::Duration::from_millis(5000)) {
+                Ok(bytes_read) => {
+                    log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&self.response_message_buffer[..bytes_read]));
+                    response_message_size = bytes_read;
+                },
+                Err(err) => {
+                    log::error!("Failed Serial Command Read: {}", err.to_string());
+                    continue
+                }
+            }
+
+            // Interpret the response
+            let response = serial::advanced_protocol::ReaderToHost::deserialize(&self.response_message_buffer[..response_message_size])?;
+            log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);
+
+
+            // Check for errors
+            let status  = obid::Status::from(response.status);
+            if status == obid::Status::RFWarning {
+                /*
+                 * A monitor is continusously checking the RF hardware and
+                 * if an error occurs the Reader answers every command with
+                 * the error code 0x84
+                 */
+                 let error_message = String::from("Generic Antenna Error: RF hardware monitor error status code 0x84");
+                 log::error!("{}", error_message);
+                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
+            } else if serial_message.device_required && status == obid::Status::NoTransponder {
+                log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
+                if attempts >= self.state.max_attempts {
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in antenna")));
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(8 * attempts as u64));
+                    continue;
+                }
+            }
+
+            // All done
+            return Ok(response);
+        }
+    }
+    // fn message(self: &mut Self, msg_to_send: &[u8]) -> Result<std::vec::Vec<u8>,()> {
+        
+    // }
+    // fn reset(self: &mut Self) -> Result<(),()> {
+        
+    // }
+}
+
+
+pub struct HapticProtocol<'a> {
+    conn: &'a dyn Connection<'a>,
+}
+impl<'a> HapticProtocol<'a> {
    /**
      * This command reads the UID of all Transponders inside the antenna field.
      * If the Reader has detected a new Transponder, that Transponder will be
@@ -566,69 +658,69 @@ impl<'a> UsbConnection<'a> {
         Ok(())
     }
 
-    fn send_command(self: &mut Self, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
-        // Marshal the serial command
-        let mut serial_message = serial_message;
-        let msg = serial_message.serialize();
+    // fn send_command(self: &mut Self, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
+    //     // Marshal the serial command
+    //     let mut serial_message = serial_message;
+    //     let msg = serial_message.serialize();
 
-        let mut attempts = 0;
-        loop {
-            // Documented not less than 5 milliseconds between messages
-            std::thread::sleep(std::time::Duration::from_millis(6));
+    //     let mut attempts = 0;
+    //     loop {
+    //         // Documented not less than 5 milliseconds between messages
+    //         std::thread::sleep(std::time::Duration::from_millis(6));
 
-            // Send the command to the Feig reader
-            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(50)) {
-                Ok(bytes_written) => {
-                    log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
-                },
-                Err(err) => {
-                    log::error!("Failed Serial Command Send: {}", err.to_string());
-                    return Err(Box::new(err));
-                }
-            }
+    //         // Send the command to the Feig reader
+    //         match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(50)) {
+    //             Ok(bytes_written) => {
+    //                 log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
+    //             },
+    //             Err(err) => {
+    //                 log::error!("Failed Serial Command Send: {}", err.to_string());
+    //                 return Err(Box::new(err));
+    //             }
+    //         }
 
-            // Read the response to the command
-            attempts += 1;
-            let response_message_size ;
-            match self.device_handle.read_bulk(129, self.response_message_buffer.as_mut_slice(), std::time::Duration::from_millis(5000)) {
-                Ok(bytes_read) => {
-                    log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&self.response_message_buffer[..bytes_read]));
-                    response_message_size = bytes_read;
-                },
-                Err(err) => {
-                    log::error!("Failed Serial Command Read: {}", err.to_string());
-                    continue
-                }
-            }
+    //         // Read the response to the command
+    //         attempts += 1;
+    //         let response_message_size ;
+    //         match self.device_handle.read_bulk(129, self.response_message_buffer.as_mut_slice(), std::time::Duration::from_millis(5000)) {
+    //             Ok(bytes_read) => {
+    //                 log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&self.response_message_buffer[..bytes_read]));
+    //                 response_message_size = bytes_read;
+    //             },
+    //             Err(err) => {
+    //                 log::error!("Failed Serial Command Read: {}", err.to_string());
+    //                 continue
+    //             }
+    //         }
 
-            // Interpret the response
-            let response = serial::advanced_protocol::ReaderToHost::deserialize(&self.response_message_buffer[..response_message_size])?;
-            log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);
+    //         // Interpret the response
+    //         let response = serial::advanced_protocol::ReaderToHost::deserialize(&self.response_message_buffer[..response_message_size])?;
+    //         log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);
 
 
-            // Check for errors
-            let status  = obid::Status::from(response.status);
-            if status == obid::Status::RFWarning {
-                /*
-                 * A monitor is continusously checking the RF hardware and
-                 * if an error occurs the Reader answers every command with
-                 * the error code 0x84
-                 */
-                 let error_message = String::from("Generic Antenna Error: RF hardware monitor error status code 0x84");
-                 log::error!("{}", error_message);
-                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
-            } else if serial_message.device_required && status == obid::Status::NoTransponder {
-                log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
-                if attempts >= self.state.max_attempts {
-                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in antenna")));
-                } else {
-                    std::thread::sleep(std::time::Duration::from_millis(8 * attempts as u64));
-                    continue;
-                }
-            }
+    //         // Check for errors
+    //         let status  = obid::Status::from(response.status);
+    //         if status == obid::Status::RFWarning {
+    //             /*
+    //              * A monitor is continusously checking the RF hardware and
+    //              * if an error occurs the Reader answers every command with
+    //              * the error code 0x84
+    //              */
+    //              let error_message = String::from("Generic Antenna Error: RF hardware monitor error status code 0x84");
+    //              log::error!("{}", error_message);
+    //              return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
+    //         } else if serial_message.device_required && status == obid::Status::NoTransponder {
+    //             log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
+    //             if attempts >= self.state.max_attempts {
+    //                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in antenna")));
+    //             } else {
+    //                 std::thread::sleep(std::time::Duration::from_millis(8 * attempts as u64));
+    //                 continue;
+    //             }
+    //         }
 
-            // All done
-            return Ok(response);
-        }
-    }
+    //         // All done
+    //         return Ok(response);
+    //     }
+    // }
 }

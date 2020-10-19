@@ -75,7 +75,7 @@ pub struct ServerContext {
     usb_ctx: libusb::Context,
 }
 
-impl ServerContext {
+impl ServerContext {//Need ability to select connection type here?
     pub fn new(endpoint: String) -> Result<ServerContext, Box<dyn std::error::Error>> {
         Ok(ServerContext {
             net_ctx: NetworkContext::new(endpoint, "REP_DEALER")?,
@@ -86,7 +86,7 @@ impl ServerContext {
 
 pub struct Server<'a> {
     ctx:  &'a ServerContext,
-    conn: vrp::UsbConnection<'a>,
+    conn: &'a dyn vrp::Connection<'a>,
     fabrics: HashMap<String, vrp::Fabric>,
 }
 
@@ -94,11 +94,12 @@ pub struct Client {
     net_ctx: NetworkContext
 }
 
-impl<'a> Server<'a> {
-    pub fn new(ctx: &'a ServerContext) -> Result<Server<'a>, Box<dyn std::error::Error>> {
+impl<'a> Server<'a> {//Need ability to select connection type here?
+    pub fn new(ctx: &'a ServerContext, ) -> Result<Server<'a>, Box<dyn std::error::Error>> {
+        let mut connection: vrp::UsbConnection =  vrp::Connection::new(&ctx.usb_ctx);
         Ok(Server {
             ctx,
-            conn: vrp::UsbConnection::new(&ctx.usb_ctx)?,
+            conn: &connection,
             fabrics: HashMap::new(),
         })
     }
