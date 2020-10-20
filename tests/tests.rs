@@ -104,7 +104,7 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
             let server = vr_actuators_cli::network::Server::new(&server_context,"usb");
             match &server {
                 Ok(_) => {}
-                Err(err) => { 
+                Err(err) => {
                     log::error!("Failed to initialize server: {}", err);
                     return Err(());
                 }
@@ -112,7 +112,7 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
             let mut server = server.unwrap();
 
             let endpoint = server.get_last_endpoint();
-            log::info!("Server connected to: {}", endpoint); 
+            log::info!("Server connected to: {}", endpoint);
             {
                 *server_endpoint.lock().unwrap() = endpoint;
             }
@@ -126,7 +126,7 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
                     panic!(format!("Encountered error: {}", err));
                 }
             }
-            
+
             Ok(())
         });
 
@@ -281,10 +281,10 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
 
     let timer_mode_blocks = vr_actuators_cli::vrp::TimerModeBlocks {
        /*
-        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on. 
+        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on.
         * The high frequency signal (carrier) timing is given by block 6 (0x18).
         *
-        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing 
+        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing
         */
         single_pulse_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
             b0: 0x00,
@@ -294,9 +294,9 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode. 
-         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode.
+         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
         */
         hf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
@@ -307,9 +307,9 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal. 
-         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal.
+         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
          */
         lf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
@@ -373,10 +373,10 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
 
     let timer_mode_blocks = vr_actuators_cli::vrp::TimerModeBlocks {
        /*
-        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on. 
+        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on.
         * The high frequency signal (carrier) timing is given by block 6 (0x18).
-        * 
-        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing 
+        *
+        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing
         */
         single_pulse_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
             b0: 0x00,
@@ -386,9 +386,9 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode. 
-         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode.
+         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
         */
         hf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
@@ -399,9 +399,9 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal. 
-         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal.
+         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
          */
         lf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {

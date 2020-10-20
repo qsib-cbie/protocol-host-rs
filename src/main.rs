@@ -1,4 +1,8 @@
+
+mod vrp;
 mod network;
+mod conn;
+mod obid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define the acceptable user input behavior
@@ -63,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_matches();
 
     // Configure the logger before heading off to the rest of the functionality
-    simple_logger::init().unwrap(); 
+    simple_logger::init().unwrap();
     let level_filter = match matches.occurrences_of("v") {
         0 => log::LevelFilter::Error,
         1 => log::LevelFilter::Info,
@@ -86,9 +90,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let port: i16 = port.parse().expect("Expected a small integer for port");
 
         loop {
-            let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
-            let server_context = network::ServerContext::new(endpoint)?;
-            let mut server = network::Server::new(&server_context, "usb").expect("Failed to initialize server");
+            let endpoint = network::common::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
+            let server_context = network::server::ServerContext::new(endpoint)?;
+            let mut server = network::server::Server::new(&server_context, String::from("mock")).expect("Failed to initialize server");
             match server.serve() {
                 Ok(reserve) => {
                     log::info!("Finished serving with Ok result.");
@@ -112,14 +116,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected small integer for port");
 
-        let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
-        let mut client = network::Client::new(endpoint).expect("Failed to initialize client");
+        let endpoint = network::common::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
+        let mut client = network::client::Client::new(endpoint).expect("Failed to initialize client");
 
         // Send each of the commands
         let commands = String::from(matches.value_of("commands").unwrap());
         let file = std::fs::File::open(commands)?;
         let reader = std::io::BufReader::new(file);
-        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<network::CommandMessage>();
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<network::common::CommandMessage>();
         for command in stream {
             log::trace!("Found command: {:#?}", command);
             client.request_message(command?)?
