@@ -86,7 +86,9 @@ impl ServerContext {//Need ability to select connection type here?
 
 pub struct Server<'a> {
     ctx:  &'a ServerContext,
-    conn: &'a dyn vrp::Connection<'a>,
+    conn_type: String,
+    conn: Box<dyn vrp::Connection<'a> + 'a>,
+    protocol: vrp::HapticProtocol<'a>,
     fabrics: HashMap<String, vrp::Fabric>,
 }
 
@@ -95,11 +97,13 @@ pub struct Client {
 }
 
 impl<'a> Server<'a> {//Need ability to select connection type here?
-    pub fn new(ctx: &'a ServerContext, ) -> Result<Server<'a>, Box<dyn std::error::Error>> {
-        let mut connection: vrp::UsbConnection =  vrp::Connection::new(&ctx.usb_ctx);
+    pub fn new(ctx: &'a ServerContext,conn_type: String ) -> Result<Server<'a>, Box<dyn std::error::Error>> {
+        let connection: vrp::UsbConnection = vrp::Connection::new(&ctx.usb_ctx)?;
         Ok(Server {
             ctx,
-            conn: &connection,
+            conn_type,
+            conn: Box::new(connection),
+            protocol: vrp::HapticProtocol{conn: Box::new(connection)},
             fabrics: HashMap::new(),
         })
     }
@@ -130,7 +134,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
 
                 CommandMessage::SystemReset { } => {
                     log::debug!("Received SystemReset.");
-                    let reset = self.conn.system_reset();
+                    let reset = self.protocol.system_reset();
 
                     log::info!("Waiting for Feig Reader to reboot after system reset ...");
                     std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -148,7 +152,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                     log::debug!("Received SetRadioFreqPower command for power_level {:?}.", power_level);
                     match power_level {
                         pl if pl == 0 || (pl >= 2 && pl <= 12) => {
-                            self.conn.set_radio_freq_power(power_level)
+                            self.protocol.set_radio_freq_power(power_level)
                         },
                         _ => {
                             let message = format!("Value for power level ({}) is outside acceptable range Low Power (0) or [2,12].", power_level);
@@ -160,11 +164,11 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                 CommandMessage::CustomCommand { control_byte, data, device_required } => {
                     log::debug!("Received Custom command with control_byte {} and data {}", hex::encode(vec![control_byte]), hex::encode(data.as_bytes()));
                     let decoded_data = hex::decode(&data)?;
-                    self.conn.custom_command(control_byte, decoded_data.as_slice(), device_required)
+                    self.protocol.custom_command(control_byte, decoded_data.as_slice(), device_required)
                 },
 
                 CommandMessage::AddFabric { fabric_name } => {
-                    match vrp::Fabric::new(&mut self.conn, fabric_name.as_str()) {
+                    match vrp::Fabric::new(&mut self.protocol, fabric_name.as_str()) {
                         Ok(fabric) => {
                             self.fabrics.insert(fabric_name, fabric);
 
@@ -288,7 +292,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
             }
         };
 
-        let result = self.conn.actuators_command(fabric_uid.as_slice(), &actuators_command.timer_mode_blocks, &actuators_command.actuator_mode_blocks, &actuators_command.op_mode_block);
+        let result = self.protocol.actuators_command(fabric_uid.as_slice(), &actuators_command.timer_mode_blocks, &actuators_command.actuator_mode_blocks, &actuators_command.op_mode_block);
         if result.is_ok() {
             fabric.state.apply(actuators_command);
         }

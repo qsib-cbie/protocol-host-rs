@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
             let server_context = network::ServerContext::new(endpoint)?;
-            let mut server = network::Server::new(&server_context).expect("Failed to initialize server");
+            let mut server = network::Server::new(&server_context, "usb").expect("Failed to initialize server");
             match server.serve() {
                 Ok(reserve) => {
                     log::info!("Finished serving with Ok result.");

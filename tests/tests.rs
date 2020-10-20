@@ -101,7 +101,7 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
                 Err(_) => { return Err(()); }
             }
             let server_context = server_context.unwrap();
-            let server = vr_actuators_cli::network::Server::new(&server_context);
+            let server = vr_actuators_cli::network::Server::new(&server_context,"usb");
             match &server {
                 Ok(_) => {}
                 Err(err) => { 
@@ -192,6 +192,13 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
 #[test]
 fn nop_serve_to_client() -> Result<(), Box<dyn std::error::Error>> {
     connect_client_to_server(2000, vec![])
+}
+
+#[test]
+fn system_reset() -> Result<(), Box<dyn std::error::Error>> {
+    connect_client_to_server(5000, vec![
+        String::from(r#"{ "SystemReset": { } }"#),
+    ])
 }
 
 #[test]
