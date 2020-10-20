@@ -3,8 +3,13 @@ mod vrp;
 mod network;
 mod conn;
 mod obid;
+mod error;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use error::CliError;
+
+type Result<T> = std::result::Result<T, error::CliError>;
+
+fn main() -> Result<()> {
     // Define the acceptable user input behavior
     let matches = clap::App::new("VR Actuators")
         .version("v0.1")
@@ -16,6 +21,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .help("Sets the level of verbosity"))
         .subcommand(clap::App::new("start")
             .about("Starts the service that manages the connection to the VR Actuators")
+            .arg(clap::Arg::with_name("conn_type")
+                .short("c")
+                .long("conn-type")
+                .value_name("CONN_TYPE")
+                .default_value("usb")
+                .help("The type of connection that will be attempted")
+                .takes_value(true))
             .arg(clap::Arg::with_name("hostname")
                 .short("h")
                 .long("hostname")
@@ -88,6 +100,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hostname = String::from(matches.value_of("hostname").unwrap());
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected a small integer for port");
+
+        // Pick the connection type
+        let conn_type = match matches.value_of("conn_type").unwrap() {
+            "mock" => {
+                "mock"
+            },
+            "usb" => {
+                "usb"
+            },
+            err => {
+                log::error!("Invalid connection type: {} not supported", err);
+                return Err(CliError::from(String::from("Invalid connection Type")));
+            }
+        };
 
         loop {
             let endpoint = network::common::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
