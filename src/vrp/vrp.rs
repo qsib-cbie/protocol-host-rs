@@ -2,8 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 use crate::obid::*;
-use crate::conn::common::Connection;
-use crate::conn::mock::MockConnection;
+use crate::conn::{common::Connection, mock::MockConnection};
 use crate::error::*;
 
 #[derive(Debug)]
@@ -178,13 +177,14 @@ impl Fabric {//switch passed arg to protocol?
 }
 
 pub struct HapticProtocol<'a> {
-    conn: Box<dyn Connection<'a>>,
+    // conn: &'a mut dyn Connection<'a>,
+    conn: Box<dyn Connection<'a>>
 }
 impl<'a> HapticProtocol<'a> {
 
-    pub fn new() -> HapticProtocol<'a> {
+    pub fn new(_conn: &'a impl Connection<'a>) -> HapticProtocol<'a> {
         HapticProtocol {
-            conn: Box::new(MockConnection {})
+            conn: Box::new(MockConnection::new())
         }
     }
 

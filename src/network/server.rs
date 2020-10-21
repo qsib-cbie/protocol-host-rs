@@ -20,7 +20,6 @@ impl ServerContext {//Need ability to select connection type here?
 
 pub struct Server<'a, 'b> {
     ctx:  &'a ServerContext,
-    conn: &'b dyn Connection<'b>,
     protocol: vrp::HapticProtocol<'b>,
     fabrics: HashMap<String, vrp::Fabric>,
 }
@@ -30,8 +29,7 @@ impl<'a, 'b> Server<'a, 'b> {//Need ability to select connection type here?
     pub fn new(ctx: &'a ServerContext, conn: &'b impl Connection<'b>) -> Result<Server<'a, 'b>> {
         Ok(Server {
             ctx,
-            conn,
-            protocol: vrp::HapticProtocol::new(),
+            protocol: vrp::HapticProtocol::new(conn),
             fabrics: HashMap::new(),
         })
     }
