@@ -1,54 +1,42 @@
 use crate::vrp::vrp;
-use crate::conn::{common::Connection, mock::MockConnection};
+use crate::conn::common::*;
 use crate::network::common::*;
+use crate::error::*;
 
 use std::collections::HashMap;
 
 
 pub struct ServerContext {
     net_ctx: NetworkContext,
-    usb_ctx: libusb::Context,
 }
 
 impl ServerContext {//Need ability to select connection type here?
-    pub fn new(endpoint: String) -> Result<ServerContext, Box<dyn std::error::Error>> {
+    pub fn new(endpoint: String) -> Result<ServerContext> {
         Ok(ServerContext {
             net_ctx: NetworkContext::new(endpoint, "REP_DEALER")?,
-            usb_ctx: libusb::Context::new()?,
         })
     }
 }
 
-pub struct Server<'a> {
+pub struct Server<'a, 'b> {
     ctx:  &'a ServerContext,
-    conn_type: String,
-    conn: Box<dyn Connection<'a> + 'a>,
-    protocol: vrp::HapticProtocol<'a>,
+    conn: &'b dyn Connection<'b>,
+    protocol: vrp::HapticProtocol<'b>,
     fabrics: HashMap<String, vrp::Fabric>,
 }
 
 
-impl<'a> Server<'a> {//Need ability to select connection type here?
-    pub fn new(ctx: &'a ServerContext, conn_type: String) -> Result<Server<'a>, Box<dyn std::error::Error>> {
-        let conn = match conn_type.as_str() {
-            "mock" => {
-                Box::new(MockConnection::new())
-            },
-            _ => {
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Not yet implemented")));
-            }
-        };
-
+impl<'a, 'b> Server<'a, 'b> {//Need ability to select connection type here?
+    pub fn new(ctx: &'a ServerContext, conn: &'b impl Connection<'b>) -> Result<Server<'a, 'b>> {
         Ok(Server {
             ctx,
-            conn_type,
             conn,
             protocol: vrp::HapticProtocol::new(),
             fabrics: HashMap::new(),
         })
     }
 
-    pub fn serve(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+    pub fn serve(&mut self) -> Result<bool> {
         log::info!("Beginning serve() loop ...");
 
         assert_eq!(self.ctx.net_ctx.socket_type_name, "REP_DEALER");
@@ -60,7 +48,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
 
             // Handle the message
             let request_message = serde_json::from_slice(msg.as_slice())?;
-            let result: Result<(), Box<dyn std::error::Error>> = match request_message {
+            let result: Result<()> = match request_message {
                 CommandMessage::Stop{} => {
                     log::debug!("Received Stop.");
 
@@ -97,7 +85,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                         _ => {
                             let message = format!("Value for power level ({}) is outside acceptable range Low Power (0) or [2,12].", power_level);
                             log::error!("{}", message.as_str());
-                            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+                            Err(InternalError::from(message.as_str()))
                         }
                     }
                 },
@@ -134,7 +122,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                         None => {
                             let message = format!("No existing fabric to remove for RemoveFabric command");
                             log::error!("{}", message.as_str());
-                            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+                            Err(InternalError::from(message.as_str()))
                         }
                     }
                 },
@@ -150,7 +138,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                     let failure_message = String::from(format!("Unhandled CommandMessage request: {:#?}", other));
                     log::error!("{}", failure_message.as_str());
 
-                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Unhandled CommandMessage")));
+                    return Err(InternalError::from("Unhandled CommandMessage"));
                 }
             };
 
@@ -177,7 +165,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
         self.ctx.net_ctx.socket.get_last_endpoint().unwrap().unwrap()
     }
 
-    fn handle_actuators_command(self: &mut Self, fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>, use_cache: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
+    fn handle_actuators_command(self: &mut Self, fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>, use_cache: Option<bool>) -> Result<()> {
         let fabric = match self.fabrics.get_mut(&fabric_name) {
             Some(fabric) => {
                 log::trace!("Found transponder for actuator command: {:?}", fabric.transponders);
@@ -186,7 +174,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
             None => {
                 let message = format!("No existing fabric to write actuator command: {:?}", self.fabrics);
                 log::error!("{}", message);
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())));
+                return Err(InternalError::from(message.as_str()));
             }
         };
 
@@ -195,7 +183,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                 &fabric.transponders[0].uid
             },
             _ => {
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No transponder UID found for fabric")));
+                return Err(InternalError::from("No transponder UID found for fabric"));
             }
         };
 

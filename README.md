@@ -34,7 +34,7 @@ There is expected to be a ZMQ proxy running on a public IP host for routing traf
 
 ```rust
 impl RRBroker {
-    pub fn proxy(front_endpoint: &str, back_endpoint: &str) -> Result<(), CliError> {
+    pub fn proxy(front_endpoint: &str, back_endpoint: &str) -> Result<(), InternalError> {
         log::info!("Starting proxy for {} and {}", front_endpoint, back_endpoint);
 
         let ctx = zmq::Context::new();

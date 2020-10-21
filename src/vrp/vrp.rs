@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 use crate::obid::*;
 use crate::conn::common::Connection;
 use crate::conn::mock::MockConnection;
+use crate::error::*;
 
 #[derive(Debug)]
 pub struct ObidTransponder {
@@ -163,7 +164,7 @@ impl std::fmt::Debug for Fabric {
 }
 
 impl Fabric {//switch passed arg to protocol?
-    pub fn new(protocol: &mut HapticProtocol, name: &str) -> Result<Fabric, Box<dyn std::error::Error>> {
+    pub fn new(protocol: &mut HapticProtocol, name: &str) -> Result<Fabric> {
         let mut fabric = Fabric {
             name: String::from(name),
             transponders: smallvec::smallvec![],
@@ -195,7 +196,7 @@ impl<'a> HapticProtocol<'a> {
      *
      * @return transponders in the array
      */
-    pub fn get_inventory(self: &mut Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>, Box<dyn std::error::Error>> {
+    pub fn get_inventory(self: &mut Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>> {
         log::trace!("Requesting inventory ids ...");
         let inventory_request = advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, expect_device);
         let inventory_response = self.conn.send_command(inventory_request)?;
@@ -206,7 +207,7 @@ impl<'a> HapticProtocol<'a> {
             let encoded_transponders = inventory_response.data[0];
             let bytes_per_transponder = 1 + 1 + 8; // tr_type, dsfid, uid
             if inventory_response.data.len() != 1 + (encoded_transponders as usize) * (bytes_per_transponder as usize) {
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Unexpected data format in response to inventory request")));
+                return Err(InternalError::from("Unexpected data format in response to inventory request"));
             }
 
             for i in 0..encoded_transponders {
@@ -235,7 +236,7 @@ impl<'a> HapticProtocol<'a> {
     }
 
     /// Set the wattage for the RF power on the antenna
-    pub fn set_radio_freq_power(self: &mut Self, rf_power: u8) ->  Result<(), Box<dyn std::error::Error>> {
+    pub fn set_radio_freq_power(self: &mut Self, rf_power: u8) ->  Result<()> {
         log::trace!("Requesting RF power set to {} ...", rf_power);
         /*
          * RF Power format: 0bX0111111
@@ -286,13 +287,13 @@ impl<'a> HapticProtocol<'a> {
         log::debug!("Received response: {:#?}", response);
         if response.status == 0x11 {
             let error_message = "A reasonableness check failed while writing the RF power parameter to the reader" ;
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+            Err(InternalError::from(error_message))
         } else {
             Ok(())
         }
     }
 
-    pub fn system_reset(self: &mut Self)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn system_reset(self: &mut Self)  -> Result<()> {
         log::trace!("Requesting System Reset of RF controller ...");
         let request = advanced_protocol::HostToReader::new(0, 0xFF, 0x64, vec![0].as_slice(), 0, false);
         let response = self.conn.send_command(request)?;
@@ -300,13 +301,13 @@ impl<'a> HapticProtocol<'a> {
         let status = Status::from(response.status);
         if status != Status::Ok {
             let error_message = format!("System reset failed with status code: {:?}.", status);
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+            Err(InternalError::from(error_message))
         } else {
             Ok(())
         }
     }
 
-    pub fn custom_command(self: &mut Self, control_byte: u8, data: &[u8], device_required: bool)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn custom_command(self: &mut Self, control_byte: u8, data: &[u8], device_required: bool)  -> Result<()> {
         log::trace!("Requesting Custom Command with control_byte {:#X?} and data {:#X?} ...", control_byte, data);
 
         let request = advanced_protocol::HostToReader::new(0, 0xFF, control_byte, data, 0, device_required);
@@ -315,17 +316,17 @@ impl<'a> HapticProtocol<'a> {
         let status = Status::from(response.status);
         if status != Status::Ok {
             let error_message = format!("Command failed with status code: {:?}.", status);
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+            Err(InternalError::from(error_message))
         } else {
             Ok(())
         }
     }
 
-    pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: &Option<TimerModeBlocks>, actuator_mode_blocks: &Option<ActuatorModeBlocks>, op_mode_block: &Option<OpModeBlock>)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: &Option<TimerModeBlocks>, actuator_mode_blocks: &Option<ActuatorModeBlocks>, op_mode_block: &Option<OpModeBlock>)  -> Result<()> {
         log::trace!("Requesting write to actuators' configuration ...");
 
         if uid.len() != 8 {
-            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Expected UID, which is a serial number of 8 bytes, but found {} bytes", uid.len()))));
+            return Err(InternalError::from(format!("Expected UID, which is a serial number of 8 bytes, but found {} bytes", uid.len())));
         }
 
         // Construct the feig command

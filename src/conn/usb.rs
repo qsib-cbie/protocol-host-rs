@@ -1,5 +1,6 @@
 use crate::conn::common::*;
 use crate::obid::*;
+use crate::error::*;
 
 #[derive(Debug)]
 pub struct AntennaState {
@@ -24,12 +25,10 @@ pub struct UsbConnection<'a> {
     state: AntennaState,
     device_handle: libusb::DeviceHandle<'a>,
     response_message_buffer: std::vec::Vec<u8>,
-
-    usb_ctx: &'a libusb::Context,
 }
 
 impl<'a> Connection<'a> for UsbConnection<'a> {
-    fn send_command(self: &mut Self, serial_message: advanced_protocol::HostToReader) -> Result<advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
+    fn send_command(self: &mut Self, serial_message: advanced_protocol::HostToReader) -> Result<advanced_protocol::ReaderToHost> {
         // Marshal the serial command
         let mut serial_message = serial_message;
         let msg = serial_message.serialize();
@@ -46,7 +45,7 @@ impl<'a> Connection<'a> for UsbConnection<'a> {
                 },
                 Err(err) => {
                     log::error!("Failed Serial Command Send: {}", err.to_string());
-                    return Err(Box::new(err));
+                    return Err(InternalError::from(err));
                 }
             }
 
@@ -79,11 +78,11 @@ impl<'a> Connection<'a> for UsbConnection<'a> {
                  */
                  let error_message = String::from("Generic Antenna Error: RF hardware monitor error status code 0x84");
                  log::error!("{}", error_message);
-                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
+                 return Err(InternalError::from(error_message));
             } else if serial_message.device_required && status == Status::NoTransponder {
                 log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
                 if attempts >= self.state.max_attempts {
-                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in antenna")));
+                    return Err(InternalError::from("Failed to communicate with device in antenna"));
                 } else {
                     std::thread::sleep(std::time::Duration::from_millis(8 * attempts as u64));
                     continue;
@@ -97,17 +96,16 @@ impl<'a> Connection<'a> for UsbConnection<'a> {
 }
 
 impl<'a> UsbConnection<'a> {
-
-    fn new(ctx: &'a libusb::Context) -> Result<UsbConnection<'a>, Box<dyn std::error::Error>> {
-        match UsbConnection::get_connection(ctx){
+    pub fn new(ctx: &'a UsbContext<'a>) -> Result<UsbConnection<'a>> {
+        match UsbConnection::get_connection(ctx) {
             Ok(conn) => {Ok(conn)},
             Err(err) => {Err(err)},
         }
     }
 
-    pub fn get_connection(ctx: &'a libusb::Context) -> Result<UsbConnection<'a>, Box<dyn std::error::Error>> {
+    pub fn get_connection(ctx: &'a UsbContext<'a>) -> Result<UsbConnection<'a>> {
         for _ in 0..10 {
-            for device in ctx.devices()?.iter() {
+            for device in ctx.ctx.devices()?.iter() {
                 let device_desc = device.device_descriptor()?;
                 log::trace!("Found USB Device || Bus {:03} Device {:03} ID {} : {}",
                 device.bus_number(),
@@ -155,7 +153,6 @@ impl<'a> UsbConnection<'a> {
                             max_attempts: 5
                         },
                         response_message_buffer: vec![0; 1024 * 1024 * 64],
-                        usb_ctx: ctx,
                     });
                 }
             }
@@ -164,8 +161,24 @@ impl<'a> UsbConnection<'a> {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
 
-        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No matching USB device found")));
+        return Err(InternalError::from("No matching USB device found"));
     }
+}
 
+pub struct UsbContext<'a> {
+    pub ctx: &'a libusb::Context
+}
 
+impl<'a> UsbContext<'a> {
+    pub fn new(ctx: &'a libusb::Context) -> Result<UsbContext<'a>> {
+        Ok(UsbContext { ctx })
+    }
+}
+
+impl<'a> Context<'a> for UsbContext<'a> {
+    type Conn = UsbConnection<'a>;
+
+    fn connection(self: &'a Self) -> Result<UsbConnection<'a>> {
+        Ok(UsbConnection::new(self)?)
+    }
 }
