@@ -1,114 +1,40 @@
-#[path = "vrp.rs"] mod vrp;
+use crate::vrp::vrp;
+use crate::conn::common::*;
+use crate::network::common::*;
+use crate::error::*;
 
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
-#[allow(dead_code)]
-pub struct NetworkContext {
-    pub endpoint: String,
 
-    _ctx: zmq::Context,
-    socket: zmq::Socket,
-    socket_type_name: String,
-
-}
-
-impl NetworkContext {
-
-    pub fn get_endpoint(protocol: &str, hostname: &str, port: i16) -> String {
-        String::from(format!("{}://{}:{}", protocol, hostname, port.to_string()))
-    }
-
-    pub fn new(endpoint: String, socket_type_name: &str) -> Result<NetworkContext, Box<dyn std::error::Error>> {
-        let ctx = Self::_new(endpoint, socket_type_name);
-        match ctx {
-            Ok(ctx) => Ok(ctx),
-            Err(err) => Err(err.into()),
-        }
-    }
-
-    pub fn _new(endpoint: String, socket_type_name: &str) -> Result<NetworkContext, zmq::Error> {
-        let ctx = zmq::Context::new();
-
-        match socket_type_name {
-            "REP_DEALER" => {
-                let socket = ctx.socket(zmq::DEALER)?;
-                log::trace!("Created socket DEALER to act as REP");
-
-                socket.connect(endpoint.as_str())?;
-                log::info!("Connected to {}", endpoint);
-
-
-                Ok(NetworkContext {
-                    endpoint,
-                    _ctx: ctx,
-                    socket,
-                    socket_type_name: String::from(socket_type_name),
-
-                })
-            },
-            "REQ_DEALER" => {
-                let socket = ctx.socket(zmq::DEALER)?;
-                log::trace!("Created socket DEALER to act as REQ");
-
-                socket.connect(endpoint.as_str())?;
-                log::info!("Connected to {}", endpoint);
-
-
-                Ok(NetworkContext {
-                    endpoint,
-                    _ctx: ctx,
-                    socket,
-                    socket_type_name: String::from(socket_type_name),
-
-                })
-            },
-            _ => {
-                log::error!("Unsupported socket type: {:#?}", socket_type_name);
-                Err(zmq::Error::EINVAL)
-            }
-        }
-    }
-}
 pub struct ServerContext {
     net_ctx: NetworkContext,
-    usb_ctx: libusb::Context,
 }
 
 impl ServerContext {//Need ability to select connection type here?
-    pub fn new(endpoint: String) -> Result<ServerContext, Box<dyn std::error::Error>> {
+    pub fn new(endpoint: String) -> Result<ServerContext> {
         Ok(ServerContext {
             net_ctx: NetworkContext::new(endpoint, "REP_DEALER")?,
-            usb_ctx: libusb::Context::new()?,
         })
     }
 }
 
-pub struct Server<'a> {
+pub struct Server<'a, 'b> {
     ctx:  &'a ServerContext,
-    conn_type: String,
-    conn: Box<dyn vrp::Connection<'a> + 'a>,
-    protocol: vrp::HapticProtocol<'a>,
+    protocol: vrp::HapticProtocol<'b>,
     fabrics: HashMap<String, vrp::Fabric>,
 }
 
-pub struct Client {
-    net_ctx: NetworkContext
-}
 
-impl<'a> Server<'a> {//Need ability to select connection type here?
-    pub fn new(ctx: &'a ServerContext,conn_type: String ) -> Result<Server<'a>, Box<dyn std::error::Error>> {
-        let connection: vrp::UsbConnection = vrp::Connection::new(&ctx.usb_ctx)?;
+impl<'a, 'b> Server<'a, 'b> {//Need ability to select connection type here?
+    pub fn new(ctx: &'a ServerContext, conn: &'b impl Connection<'b>) -> Result<Server<'a, 'b>> {
         Ok(Server {
             ctx,
-            conn_type,
-            conn: Box::new(connection),
-            protocol: vrp::HapticProtocol{conn: Box::new(connection)},
+            protocol: vrp::HapticProtocol::new(conn),
             fabrics: HashMap::new(),
         })
     }
 
-    pub fn serve(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+    pub fn serve(&mut self) -> Result<bool> {
         log::info!("Beginning serve() loop ...");
 
         assert_eq!(self.ctx.net_ctx.socket_type_name, "REP_DEALER");
@@ -120,7 +46,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
 
             // Handle the message
             let request_message = serde_json::from_slice(msg.as_slice())?;
-            let result: Result<(), Box<dyn std::error::Error>> = match request_message {
+            let result: Result<()> = match request_message {
                 CommandMessage::Stop{} => {
                     log::debug!("Received Stop.");
 
@@ -157,7 +83,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                         _ => {
                             let message = format!("Value for power level ({}) is outside acceptable range Low Power (0) or [2,12].", power_level);
                             log::error!("{}", message.as_str());
-                            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+                            Err(InternalError::from(message.as_str()))
                         }
                     }
                 },
@@ -194,7 +120,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                         None => {
                             let message = format!("No existing fabric to remove for RemoveFabric command");
                             log::error!("{}", message.as_str());
-                            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())))
+                            Err(InternalError::from(message.as_str()))
                         }
                     }
                 },
@@ -210,7 +136,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                     let failure_message = String::from(format!("Unhandled CommandMessage request: {:#?}", other));
                     log::error!("{}", failure_message.as_str());
 
-                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Unhandled CommandMessage")));
+                    return Err(InternalError::from("Unhandled CommandMessage"));
                 }
             };
 
@@ -237,7 +163,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
         self.ctx.net_ctx.socket.get_last_endpoint().unwrap().unwrap()
     }
 
-    fn handle_actuators_command(self: &mut Self, fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>, use_cache: Option<bool>) -> Result<(), Box<dyn std::error::Error>> {
+    fn handle_actuators_command(self: &mut Self, fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>, use_cache: Option<bool>) -> Result<()> {
         let fabric = match self.fabrics.get_mut(&fabric_name) {
             Some(fabric) => {
                 log::trace!("Found transponder for actuator command: {:?}", fabric.transponders);
@@ -246,7 +172,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
             None => {
                 let message = format!("No existing fabric to write actuator command: {:?}", self.fabrics);
                 log::error!("{}", message);
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, message.as_str())));
+                return Err(InternalError::from(message.as_str()));
             }
         };
 
@@ -255,7 +181,7 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
                 &fabric.transponders[0].uid
             },
             _ => {
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No transponder UID found for fabric")));
+                return Err(InternalError::from("No transponder UID found for fabric"));
             }
         };
 
@@ -298,62 +224,4 @@ impl<'a> Server<'a> {//Need ability to select connection type here?
         }
         result
     }
-}
-
-impl Client {
-    pub fn new(endpoint: String) -> Result<Client, Box<dyn std::error::Error>> {
-        Ok(Client {
-            net_ctx: NetworkContext::new(endpoint, "REQ_DEALER")?,
-        })
-    }
-
-    pub fn request_message(&mut self, command_message: CommandMessage) -> Result<(), std::io::Error> {
-        // Serialze the message
-        let msg = match serde_json::to_string(&command_message) {
-            Ok(msg) => msg,
-            Err(err) => {
-                log::error!("Failed to marshal: {:#?} with error: {:?}", &command_message, err);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to marshal command_message"));
-            }
-        };
-
-        // Send the message
-        assert_eq!(self.net_ctx.socket_type_name, "REQ_DEALER");
-        self.net_ctx.socket.send(vec![], zmq::SNDMORE)?; // Simulated REQ: Empty Frame
-        self.net_ctx.socket.send(msg.as_bytes(), 0)?;    // Simulated REQ: Message Content
-
-        // Receive Confirmation
-        let _ = self.net_ctx.socket.recv_bytes(0)?;             // Simulated REQ: Empty Frame
-        let resp = self.net_ctx.socket.recv_bytes(0)?; // Simulated REQ: Message Content
-
-        // Confirm Response
-        let response_message = serde_json::from_slice(resp.as_slice())?;
-        match response_message {
-            CommandMessage::Failure { message } => {
-                log::error!("Received Failure: {}", message);
-                Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unexpected response from server: {:?}", message)))
-            },
-            other => {
-                log::trace!("Received Response: {:#?}", other);
-                Ok(())
-            }
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub enum CommandMessage {
-    Failure { message: String },
-    Success { },
-
-    Stop { },
-
-    SystemReset { },
-    SetRadioFreqPower { power_level: u8 },
-    CustomCommand { control_byte: u8, data: String, device_required: bool },
-
-    AddFabric { fabric_name: String },
-    RemoveFabric { fabric_name: String },
-    ActuatorsCommand { fabric_name: String, timer_mode_blocks: Option<vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::OpModeBlock>, use_cache: Option<bool>},
-
 }

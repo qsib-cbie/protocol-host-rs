@@ -34,7 +34,7 @@ There is expected to be a ZMQ proxy running on a public IP host for routing traf
 
 ```rust
 impl RRBroker {
-    pub fn proxy(front_endpoint: &str, back_endpoint: &str) -> Result<(), CliError> {
+    pub fn proxy(front_endpoint: &str, back_endpoint: &str) -> Result<(), InternalError> {
         log::info!("Starting proxy for {} and {}", front_endpoint, back_endpoint);
 
         let ctx = zmq::Context::new();
@@ -57,7 +57,7 @@ To run your own router, clone and build the rust CLI at https://github.com/trueb
 cd ~
 git clone https://github.com/trueb2/zmq-cli-rs.git
 cd zmq-cli-rs
-cargo run --release -- -vv start --routine rrbroker -1 tcp://0.0.0.0:6000 -2 tcp://0.0.0.0:6001 --socket-type proxy 
+cargo run --release -- -vv start --routine rrbroker -1 tcp://0.0.0.0:6000 -2 tcp://0.0.0.0:6001 --socket-type proxy
 ```
 
 
@@ -91,7 +91,7 @@ subcommand help
 jwtrueb@dhcp-10-101-176-87 vr_actuators_cli % cargo run -- start --help
     Finished dev [unoptimized + debuginfo] target(s) in 0.04s
      Running `target/debug/vr_actuators_cli start --help`
-vr_actuators_cli-start 
+vr_actuators_cli-start
 Starts the service that manages the connection to the VR Actuators
 
 USAGE:
