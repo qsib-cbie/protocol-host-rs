@@ -25,8 +25,8 @@ pub struct Server<'a, 'b> {
 }
 
 
-impl<'a, 'b> Server<'a, 'b> {//Need ability to select connection type here?
-    pub fn new(ctx: &'a ServerContext, conn: &'b mut impl Connection<'b>) -> Result<Server<'a, 'b>> {
+impl<'a, 'b> Server<'a, 'b> {
+    pub fn new(ctx: &'a ServerContext, conn: Box<dyn Connection<'b> +'b>) -> Result<Server<'a, 'b>> {
         Ok(Server {
             ctx,
             protocol: vrp::HapticProtocol::new(conn),

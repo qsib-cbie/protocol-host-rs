@@ -180,11 +180,10 @@ impl Fabric {//switch passed arg to protocol?
 
 
 pub struct HapticProtocol<'a> {
-    conn: &'a mut dyn Connection<'a>,
+    conn: Box<dyn Connection<'a> + 'a >,
 }
 impl<'a> HapticProtocol<'a> {
-
-    pub fn new(conn: &'a mut impl Connection<'a>) -> HapticProtocol<'a> {
+    pub fn new(conn: Box<dyn Connection<'a> + 'a>) -> HapticProtocol<'a> {
         HapticProtocol {
             conn,
         }
