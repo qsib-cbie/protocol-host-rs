@@ -97,13 +97,6 @@ impl<'a> Connection<'a> for UsbConnection<'a> {
 
 impl<'a> UsbConnection<'a> {
     pub fn new(ctx: &'a UsbContext<'a>) -> Result<UsbConnection<'a>> {
-        match UsbConnection::get_connection(ctx) {
-            Ok(conn) => {Ok(conn)},
-            Err(err) => {Err(err)},
-        }
-    }
-
-    pub fn get_connection(ctx: &'a UsbContext<'a>) -> Result<UsbConnection<'a>> {
         for _ in 0..10 {
             for device in ctx.ctx.devices()?.iter() {
                 let device_desc = device.device_descriptor()?;

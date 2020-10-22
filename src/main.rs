@@ -18,13 +18,13 @@ fn start_server<'a>(conn_type: &str, protocol: &str, hostname: &str, port: i16) 
     match conn_type {
         "mock" => {
             let context = Box::new(conn::mock::MockContext::new());
-            let connection = context.connection()?;
-            start_server_with_connection(&connection, &server_context)
+            let mut connection = context.connection()?;
+            start_server_with_connection(&mut connection, &server_context)
         },
         "usb" => {
             let context = Box::new(conn::usb::UsbContext::new(&libusb_context)?);
-            let connection = context.connection()?;
-            start_server_with_connection(&connection, &server_context)
+            let mut connection = context.connection()?;
+            start_server_with_connection(&mut connection, &server_context)
         },
         err => {
             log::error!("Invalid connection type: {} not supported", err);
@@ -33,12 +33,7 @@ fn start_server<'a>(conn_type: &str, protocol: &str, hostname: &str, port: i16) 
     }
 }
 
-// fn start_server_with_context<'a, 'b>(context: &'a impl conn::common::Context<'a>, server_context: &'b network::server::ServerContext) -> Result<()> {
-//     let connection  = context.connection()?;
-//     start_server_with_connection(&connection, server_context)
-// }
-
-fn start_server_with_connection<'a, 'b>(connection: &'a impl conn::common::Connection<'a>, server_context: &'b network::server::ServerContext) -> Result<()> {
+fn start_server_with_connection<'a, 'b>(connection: &'a mut impl conn::common::Connection<'a>, server_context: &'b network::server::ServerContext) -> Result<()> {
     let mut server = network::server::Server::new(server_context, connection).expect("Failed to initialize server");
     match server.serve() {
         Ok(reserve) => {

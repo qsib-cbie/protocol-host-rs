@@ -2,7 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 use crate::obid::*;
-use crate::conn::{common::Connection, mock::MockConnection};
+use crate::conn::{common::Connection};
 use crate::error::*;
 
 #[derive(Debug)]
@@ -154,6 +154,7 @@ pub struct Fabric {
     pub name: String,
     pub transponders: smallvec::SmallVec<[ObidTransponder; 2]>,
     pub state: FabricState,
+    // _marker: std::marker::PhantomData<&'a ()>,
 }
 
 impl std::fmt::Debug for Fabric {
@@ -168,6 +169,7 @@ impl Fabric {//switch passed arg to protocol?
             name: String::from(name),
             transponders: smallvec::smallvec![],
             state: FabricState::new(name),
+            // _marker: std::marker::PhantomData::<&()>,
         };
 
         fabric.transponders = protocol.get_inventory(true)?;
@@ -176,15 +178,15 @@ impl Fabric {//switch passed arg to protocol?
     }
 }
 
+
 pub struct HapticProtocol<'a> {
-    // conn: &'a mut dyn Connection<'a>,
-    conn: Box<dyn Connection<'a>>
+    conn: &'a mut dyn Connection<'a>,
 }
 impl<'a> HapticProtocol<'a> {
 
-    pub fn new(_conn: &'a impl Connection<'a>) -> HapticProtocol<'a> {
+    pub fn new(conn: &'a mut impl Connection<'a>) -> HapticProtocol<'a> {
         HapticProtocol {
-            conn: Box::new(MockConnection::new())
+            conn,
         }
     }
 
