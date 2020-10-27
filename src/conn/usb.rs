@@ -2,21 +2,7 @@ use crate::conn::common::*;
 use crate::obid::*;
 use crate::error::*;
 
-#[derive(Debug)]
-pub struct AntennaState {
-    /// A Usb Connection manipulates a Feig reader and an NFC antenna
 
-    antenna_id: Option<String>,
-    pulse_mode: Option<i32>,
-    hf_mod: Option<i32>,
-    lf_mod: Option<i32>,
-    act_block_count: Option<i32>,
-
-    op_mode: Option<String>,
-    act_mode: Option<String>,
-
-    max_attempts: i32,
-}
 
 /// Feig-based Connections are documented here
 /// http://www.sebeto.com/intranet/ftpscambio/RFID_FEIG/Readers/ID%20ISC%20LR2500/Documentation/H01112-0e-ID-B.pdf
@@ -32,7 +18,7 @@ impl<'a> Connection<'a> for UsbConnection<'a> {
         // Marshal the serial command
         let mut serial_message = serial_message;
         let msg = serial_message.serialize();
-
+        log::info!("{:?}",msg);
         let mut attempts = 0;
         loop {
             // Documented not less than 5 milliseconds between messages
