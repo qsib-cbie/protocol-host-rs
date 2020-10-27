@@ -10,8 +10,6 @@ use std::io::prelude::*;
     Need to match netmask when setting ip for linked computer (as long as ip address matches reader when subnet is 255 it should connect.Ex:192.168.1.1). 
         Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 via direct link with ethernet cable.
         Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 with reader and computer connected to seperate ethernet jacks in wall of bench.
-
-    
 */
 
 
@@ -80,16 +78,14 @@ impl<'a> Connection<'a> for EthernetConnection {
             return Ok(response);
         }
     }
-    // Err(InternalError::from("Not yet implemented"))
-    // }
 }
 
 impl EthernetConnection {
     pub fn new(addr: &str) -> Result<EthernetConnection> {
-        log::info!("Checking Ethernet Connection");
+        log::debug!("Checking Ethernet Connection");
         match std::net::TcpStream::connect(addr) {
             Ok(stream) => {
-                log::info!("Connected to the server!");
+                log::info!("Connected to the Fieg Reader!");
                 return Ok(EthernetConnection {
                     state: AntennaState {
                             antenna_id: None,
@@ -116,18 +112,21 @@ impl EthernetConnection {
     }
 }
 
-// pub struct EthernetContext { }
+pub struct EthernetContext<'a> { 
+    pub addr: &'a str,
+}
 
-// impl<'a> Context<'a> for EthernetContext {
-//     type Conn = EthernetConnection;
+impl<'a> EthernetContext<'a> {
+    pub fn new(addr: &'a str) -> Result<EthernetContext<'a>> {
+        Ok(EthernetContext { addr })
+    }
+}
 
-//     fn connection(self: &'a Self) -> Result<EthernetConnection> {
-//         Ok(EthernetConnection::new()?)
-//     }
-// }
+impl<'a> Context<'a> for EthernetContext<'a> {
+    type Conn = EthernetConnection;
 
-// impl EthernetContext {
-//     pub fn new() -> Result<EthernetContext> {
-//         EthernetContext {}
-//     }
-// }
+    fn connection(self: &'a Self) -> Result<EthernetConnection> {
+        Ok(EthernetConnection::new(self.addr)?)
+    }
+}
+

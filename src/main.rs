@@ -7,21 +7,6 @@ mod error;
 
 use error::{Result, InternalError};
 use conn::common::*;
-use std::net::TcpStream;
-
-fn check_ethernet() -> Result<()> {
-    log::info!("Checking Ethernet Connection");
-    match TcpStream::connect("192.168.10.10:10001") {
-        Ok(_) => {
-            log::info!("Connected to the server!");
-        }
-        Err(_) => {
-            log::info!("Couldn't connect to server...");
-        }
-    }
-    log::info!("Done Checking");
-    Ok(())
-}
 
 fn start_server<'a>(conn_type: &str, protocol: &str, hostname: &str, port: i16) -> Result<()> {
     let endpoint = network::common::NetworkContext::get_endpoint(protocol, hostname, port);
@@ -42,7 +27,8 @@ fn start_server<'a>(conn_type: &str, protocol: &str, hostname: &str, port: i16) 
             start_server_with_connection(connection, &server_context)
         },
         "ethernet" => {
-            let connection = Box::new(conn::ethernet::EthernetConnection::new("192.168.10.10:10001")?);
+            let context = Box::new(conn::ethernet::EthernetContext::new("192.168.10.10:10001")?);
+            let connection = Box::new(context.connection()?);
             start_server_with_connection(connection, &server_context)
         },
         err => {
