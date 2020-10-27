@@ -2,6 +2,7 @@ extern crate vr_actuators_cli;
 
 use std::{sync::mpsc, thread, time::Duration};
 use vr_actuators_cli::conn::common::Context;
+use vr_actuators_cli::error::*;
 
 fn panic_after<T, F>(d: Duration, f: F) -> T
 where
@@ -23,7 +24,7 @@ where
 }
 
 
-fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>, _conn_type: &str) -> Result<()> {
     // Multiple tests may attempt to re-register the logger
     let _ = simple_logger::init_with_level(log::Level::Info);
 
@@ -47,7 +48,7 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
         let control_endpoint = publisher.get_last_endpoint().unwrap().unwrap();
         log::info!("Bound control to {:?}", control_endpoint);
 
-        let proxy_handle = std::thread::spawn(move || -> Result<(), ()> {
+        let proxy_handle = std::thread::spawn(move || -> () {
             log::info!("Starting proxy ...");
 
             let any_local_endpoint = vr_actuators_cli::network::common::NetworkContext::get_endpoint("tcp", "*", 0);
@@ -77,65 +78,62 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
             }
 
             assert!(zmq::proxy_steerable(&mut front, &mut back, &mut control).is_ok());
-            Ok(())
+            ()
         });
 
-        let server_handle = std::thread::spawn(move || -> Result<(), ()>  {
-            log::info!("Starting server ...");
+        let server_handle = std::thread::spawn(move || -> ()  {
+            let work = move || -> Result<()> {
+                log::info!("Starting server ...");
 
-            let endpoint;
-            loop {
-                {
-                    let guard = server_endpoint.lock().unwrap();
-                    if !guard.is_empty() {
-                        endpoint = guard.clone();
-                        break;
+                let endpoint;
+                loop {
+                    {
+                        let guard = server_endpoint.lock().unwrap();
+                        if !guard.is_empty() {
+                            endpoint = guard.clone();
+                            break;
+                        }
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+
+                loop {
+                    let server_context = vr_actuators_cli::network::server::ServerContext::new((&endpoint).clone())?;
+                    // match conn_type {
+                        // "mock" => {
+                    // let context = Box::new(vr_actuators_cli::conn::mock::MockContext::new());
+                    // let conn= context.connection();
+                        // }
+                    // };
+                    let connection = Box::new(vr_actuators_cli::conn::ethernet::EthernetConnection::new("192.168.10.10:10001")?);
+                    let mut server = vr_actuators_cli::network::server::Server::new(&server_context,connection)?;
+
+                    let endpoint = server.get_last_endpoint();
+                    log::info!("Server connected to: {}", endpoint);
+                    {
+                        *server_endpoint.lock().unwrap() = endpoint;
+                    }
+
+                    match server.serve() {
+                        Ok(false) => {
+                            log::info!("Finished serving with Ok result.");
+                            return Ok(());
+                        },
+                        Ok(true) => {
+                            log::info!("Continuing serve");
+                        }
+                        Err(err) => {
+                            log::error!("Failed to server: {}", err);
+                            return Err(err);
+                        }
                     }
                 }
-
-                std::thread::sleep(std::time::Duration::from_millis(100));
+            };
+            match work() {
+                Err(err) => panic!("{}",err),
+                _ => ()
             }
-
-            let server_context = vr_actuators_cli::network::server::ServerContext::new(endpoint);
-            match server_context {
-                Ok(_) => {}
-                Err(_) => { return Err(()); }
-            }
-            let server_context = server_context.unwrap();
-            let context = Box::new(vr_actuators_cli::conn::mock::MockContext::new());
-            let connection= context.connection();
-            match connection {
-                Ok(_) => {}
-                Err(_) => {return Err(());}
-            }
-            let connection = Box::new(connection.unwrap());
-            let server = vr_actuators_cli::network::server::Server::new(&server_context,connection);
-            match &server {
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!("Failed to initialize server: {}", err);
-                    return Err(());
-                }
-            }
-            let mut server = server.unwrap();
-
-            let endpoint = server.get_last_endpoint();
-            log::info!("Server connected to: {}", endpoint);
-            {
-                *server_endpoint.lock().unwrap() = endpoint;
-            }
-
-            match server.serve() {
-                Ok(_) => {
-                    log::info!("Finished serving with Ok result.");
-                },
-                Err(err) => {
-                    log::error!("Failed to server: {}", err);
-                    panic!(format!("Encountered error: {}", err));
-                }
-            }
-
-            Ok(())
         });
 
         let client_handle = std::thread::spawn(move || {
@@ -174,7 +172,6 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
                     assert!(result.is_ok());
                 }
             }
-
             ()
         });
 
@@ -198,47 +195,47 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
 }
 
 #[test]
-fn nop_serve_to_client() -> Result<(), Box<dyn std::error::Error>> {
-    connect_client_to_server(2000, vec![])
+fn nop_serve_to_client() -> Result<()> {
+    connect_client_to_server(2000, vec![],"ethernet")
 }
 
 #[test]
-fn system_reset() -> Result<(), Box<dyn std::error::Error>> {
-    connect_client_to_server(5000, vec![
+fn system_reset() -> Result<()> {
+    connect_client_to_server(10000, vec![
         String::from(r#"{ "SystemReset": { } }"#),
-    ])
+    ],"ethernet")
 }
 
 #[test]
-fn connect_to_fabric() -> Result<(), Box<dyn std::error::Error>> {
+fn connect_to_fabric() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "AddFabric": { "fabric_name": "Obid Feig LRM2500-B" } }"#),
-    ])
+    ],"ethernet")
 }
 
 #[test]
-fn set_the_power_level() -> Result<(), Box<dyn std::error::Error>> {
+fn set_the_power_level() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 4 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ])
+    ],"ethernet")
 }
 
 #[test]
-fn set_the_power_level_low_power() -> Result<(), Box<dyn std::error::Error>> {
+fn set_the_power_level_low_power() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 0 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ])
+    ],"ethernet")
 }
 
 #[test]
-fn e2e_pulsing_after_antenna_reset() -> Result<(), Box<dyn std::error::Error>> {
+fn e2e_pulsing_after_antenna_reset() -> Result<()> {
     // Reset the conditions of the antenna
     connect_client_to_server(5000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 2 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ])?;
+    ],"ethernet")?;
 
     // Allow the antenna time to come back online
     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -248,7 +245,7 @@ fn e2e_pulsing_after_antenna_reset() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
+fn e2e_pulsing() -> Result<()> {
     // Issues commands to enable all actuators in the single fabric of 36 in continuous 50 ms on 50 ms off
     let op_mode_block = vr_actuators_cli::vrp::vrp::OpModeBlock {
         act_cnt32: 0x02, // ceil(36.0 / 32.0) = 2
@@ -334,13 +331,13 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
         String::from(r#"{ "AddFabric": { "fabric_name": "Jacob's Test Actuator Block of 36" } }"#),
         String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {}, "actuator_mode_blocks": {}, "timer_mode_blocks": {} }} }}"#, op_mode_block, actuator_mode_blocks, timer_mode_blocks)),
         // String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {} }} }}"#, op_mode_block)),
-    ])?;
+    ],"ethernet")?;
 
     Ok(())
 }
 
 #[test]
-fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
+fn send_all_off() -> Result<()> {
     // Issues commands to enable all actuators in the single fabric of 36 in continuous 50 ms on 50 ms off
     let op_mode_block = vr_actuators_cli::vrp::vrp::OpModeBlock {
         act_cnt32: 0x02, // ceil(36.0 / 32.0) = 2
@@ -426,7 +423,7 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
         String::from(r#"{ "AddFabric": { "fabric_name": "Jacob's Test Actuator Block of 36" } }"#),
         String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {}, "actuator_mode_blocks": {}, "timer_mode_blocks": {} }} }}"#, op_mode_block, actuator_mode_blocks, timer_mode_blocks)),
         // String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {} }} }}"#, op_mode_block)),
-    ])?;
+    ],"ethernet")?;
 
     Ok(())
 }
