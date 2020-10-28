@@ -5,8 +5,13 @@ use crate::error::*;
 pub struct MockConnection {}
 
 impl<'a> Connection<'a> for MockConnection {
-    fn send_command(self: &mut Self, _serial_message: advanced_protocol::HostToReader) -> Result<advanced_protocol::ReaderToHost> {
-        Err(InternalError::from("Not yet implemented"))
+    fn send_command(self: &mut Self, serial_message: advanced_protocol::HostToReader) -> Result<advanced_protocol::ReaderToHost> {
+        let mut serial_message = serial_message;
+        let msg = serial_message.serialize();
+        log::debug!("Sent msg: {:?}",msg);
+        let response = advanced_protocol::ReaderToHost::deserialize(&msg)?;
+        log::debug!("Recieved response: {:?}",response);
+        Ok(response)
     }
 }
 
