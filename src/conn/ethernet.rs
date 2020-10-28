@@ -2,12 +2,13 @@ use crate::conn::common::*;
 use crate::obid::*;
 use crate::error::*;
 
-use std::io::prelude::*;
+use std::{sync::mpsc, thread, time::Duration, io::prelude::*};
+
 
 
 /*Notes on Ethernet connection: 
     Fieg Reader IP: 192.168.10.10, netmask: 255.255.0.0
-    Need to match netmask when setting ip for linked computer (as long as ip address matches reader when subnet is 255 it should connect.Ex:192.168.1.1). 
+    Need to match netmask when setting ip for linked computer (as long as ip address matches reader ip where subnet mask is 255 it should connect.Ex:192.168.1.1 since reader ip is 192.168.10.10 and mask is 255.255.0.0). 
         Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 via direct link with ethernet cable.
         Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 with reader and computer connected to seperate ethernet jacks in wall of bench.
 */
@@ -130,3 +131,39 @@ impl<'a> Context<'a> for EthernetContext<'a> {
     }
 }
 
+
+#[test]
+fn check_ethernet_connection() -> Result<()> {
+    let _ = simple_logger::init_with_level(log::Level::Debug);
+    _panic_after(Duration::from_millis(5000), move || -> (){
+        let work = move || -> Result<()>{
+            let context = Box::new(EthernetContext::new("192.168.10.10:10001")?);
+            let _connection = Box::new(context.connection()?);
+            Ok(())
+        };
+        match work() {
+            Err(err) => panic!("Panicked with error {}", err),
+            _ => {}
+        }
+    });
+
+    Ok(())
+}
+fn _panic_after<T, F>(d: Duration, f: F) -> T
+where
+    T: Send + 'static,
+    F: FnOnce() -> T,
+    F: Send + 'static,
+{
+    let (done_tx, done_rx) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let val = f();
+        done_tx.send(()).expect("Unable to send completion signal");
+        val
+    });
+
+    match done_rx.recv_timeout(d) {
+        Ok(_) => handle.join().expect("Thread panicked"),
+        Err(_) => panic!("Thread took too long"),
+    }
+}
