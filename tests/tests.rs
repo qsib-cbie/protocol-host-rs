@@ -24,7 +24,7 @@ where
 }
 
 
-fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>, _conn_type: &str) -> Result<()> {
+fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>, conn_type: &'static str) -> Result<()> {
     // Multiple tests may attempt to re-register the logger
     let _ = simple_logger::init_with_level(log::Level::Info);
 
@@ -97,17 +97,30 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
 
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
-
+                
                 loop {
+                    let libusb_context = libusb::Context::new()?;
+                    //Lifetime issues if not outside match statement
+                    let usbcontext = Box::new(vr_actuators_cli::conn::usb::UsbContext::new(&libusb_context)?);  
+                    
                     let server_context = vr_actuators_cli::network::server::ServerContext::new((&endpoint).clone())?;
-                    // match conn_type {
-                        // "mock" => {
-                    // let context = Box::new(vr_actuators_cli::conn::mock::MockContext::new());
-                    // let conn= context.connection();
-                        // }
-                    // };
-                    let connection = Box::new(vr_actuators_cli::conn::ethernet::EthernetConnection::new("192.168.10.10:10001")?);
-                    let mut server = vr_actuators_cli::network::server::Server::new(&server_context,connection)?;
+                    
+                    let conn: Box<dyn vr_actuators_cli::conn::common::Connection> = match conn_type {
+                        "mock" => {
+                            let context = Box::new(vr_actuators_cli::conn::mock::MockContext::new());
+                            Box::new(context.connection()?)
+                        },
+                        "usb" => {
+                            Box::new(usbcontext.connection()?)
+                        },
+                        "ethernet" => {
+                            let context = Box::new(vr_actuators_cli::conn::ethernet::EthernetContext::new("192.168.10.10:10001")?);
+                            Box::new(context.connection()?)
+                        },
+                        _ => {return Err(InternalError::from("No conn_type"));},
+                    };
+
+                    let mut server = vr_actuators_cli::network::server::Server::new(&server_context, conn)?;
 
                     let endpoint = server.get_last_endpoint();
                     log::info!("Server connected to: {}", endpoint);
@@ -196,21 +209,27 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
 
 #[test]
 fn nop_serve_to_client() -> Result<()> {
-    connect_client_to_server(2000, vec![],"ethernet")
+    connect_client_to_server(2000, vec![]
+        // ,"mock")
+    ,"ethernet")
 }
 
 #[test]
 fn system_reset() -> Result<()> {
     connect_client_to_server(10000, vec![
         String::from(r#"{ "SystemReset": { } }"#),
-    ],"ethernet")
+    ]
+    // ,"mock")
+    ,"ethernet")
 }
 
 #[test]
 fn connect_to_fabric() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "AddFabric": { "fabric_name": "Obid Feig LRM2500-B" } }"#),
-    ],"ethernet")
+    ]
+    // ,"mock")
+    ,"ethernet")
 }
 
 #[test]
@@ -218,7 +237,9 @@ fn set_the_power_level() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 4 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ],"ethernet")
+    ]
+    // ,"mock")
+    ,"ethernet")
 }
 
 #[test]
@@ -226,7 +247,9 @@ fn set_the_power_level_low_power() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 0 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ],"ethernet")
+    ]
+    ,"mock")
+    // ,"ethernet")
 }
 
 #[test]
@@ -235,7 +258,9 @@ fn e2e_pulsing_after_antenna_reset() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 2 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ],"ethernet")?;
+    ]
+    ,"mock")?;
+    // ,"ethernet")?;
 
     // Allow the antenna time to come back online
     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -331,7 +356,9 @@ fn e2e_pulsing() -> Result<()> {
         String::from(r#"{ "AddFabric": { "fabric_name": "Jacob's Test Actuator Block of 36" } }"#),
         String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {}, "actuator_mode_blocks": {}, "timer_mode_blocks": {} }} }}"#, op_mode_block, actuator_mode_blocks, timer_mode_blocks)),
         // String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {} }} }}"#, op_mode_block)),
-    ],"ethernet")?;
+    ]
+    // ,"mock")?;
+    ,"ethernet")?;
 
     Ok(())
 }
@@ -423,7 +450,9 @@ fn send_all_off() -> Result<()> {
         String::from(r#"{ "AddFabric": { "fabric_name": "Jacob's Test Actuator Block of 36" } }"#),
         String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {}, "actuator_mode_blocks": {}, "timer_mode_blocks": {} }} }}"#, op_mode_block, actuator_mode_blocks, timer_mode_blocks)),
         // String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {} }} }}"#, op_mode_block)),
-    ],"ethernet")?;
+    ]
+    // ,"mock")?;
+    ,"ethernet")?;
 
     Ok(())
 }
