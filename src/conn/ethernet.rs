@@ -24,7 +24,6 @@ impl<'a> Connection<'a> for EthernetConnection {
     fn send_command(self: &mut Self, serial_message: advanced_protocol::HostToReader) -> Result<advanced_protocol::ReaderToHost> {
         let mut serial_message = serial_message;
         let msg = serial_message.serialize();
-        log::info!("{:?}",msg);
         let mut attempts = 0;
         loop {
             match self.stream.write(&msg) {

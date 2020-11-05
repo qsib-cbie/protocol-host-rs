@@ -26,7 +26,7 @@ where
 
 fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>, conn_type: &'static str) -> Result<()> {
     // Multiple tests may attempt to re-register the logger
-    let _ = simple_logger::init_with_level(log::Level::Info);
+    let _ = simple_logger::init_with_level(log::Level::Debug);
 
     panic_after(Duration::from_millis(timeout), move || {
         let proxy_front_endpoint = std::sync::Mutex::new(String::from(""));
@@ -134,7 +134,7 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
                             return Ok(());
                         },
                         Ok(true) => {
-                            log::info!("Continuing serve");
+                            log::info!("Continuing serve loop");
                         }
                         Err(err) => {
                             log::error!("Failed to server: {}", err);
@@ -216,7 +216,7 @@ fn nop_serve_to_client() -> Result<()> {
 
 #[test]
 fn system_reset() -> Result<()> {
-    connect_client_to_server(10000, vec![
+    connect_client_to_server(15000, vec![
         String::from(r#"{ "SystemReset": { } }"#),
     ]
     // ,"mock")
@@ -225,7 +225,7 @@ fn system_reset() -> Result<()> {
 
 #[test]
 fn connect_to_fabric() -> Result<()> {
-    connect_client_to_server(5000, vec![
+    connect_client_to_server(10000, vec![
         String::from(r#"{ "AddFabric": { "fabric_name": "Obid Feig LRM2500-B" } }"#),
     ]
     // ,"mock")
@@ -234,7 +234,7 @@ fn connect_to_fabric() -> Result<()> {
 
 #[test]
 fn set_the_power_level() -> Result<()> {
-    connect_client_to_server(5000, vec![
+    connect_client_to_server(10000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 4 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
     ]
@@ -255,12 +255,12 @@ fn set_the_power_level_low_power() -> Result<()> {
 #[test]
 fn e2e_pulsing_after_antenna_reset() -> Result<()> {
     // Reset the conditions of the antenna
-    connect_client_to_server(5000, vec![
+    connect_client_to_server(10000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 2 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
     ]
-    ,"mock")?;
-    // ,"ethernet")?;
+    // ,"mock")?;
+    ,"ethernet")?;
 
     // Allow the antenna time to come back online
     std::thread::sleep(std::time::Duration::from_secs(5));

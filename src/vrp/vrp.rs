@@ -154,7 +154,6 @@ pub struct Fabric {
     pub name: String,
     pub transponders: smallvec::SmallVec<[ObidTransponder; 2]>,
     pub state: FabricState,
-    // _marker: std::marker::PhantomData<&'a ()>,
 }
 
 impl std::fmt::Debug for Fabric {
@@ -169,7 +168,6 @@ impl Fabric {//switch passed arg to protocol?
             name: String::from(name),
             transponders: smallvec::smallvec![],
             state: FabricState::new(name),
-            // _marker: std::marker::PhantomData::<&()>,
         };
 
         fabric.transponders = protocol.get_inventory(true)?;

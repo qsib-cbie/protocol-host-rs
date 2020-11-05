@@ -18,7 +18,6 @@ impl<'a> Connection<'a> for UsbConnection<'a> {
         // Marshal the serial command
         let mut serial_message = serial_message;
         let msg = serial_message.serialize();
-        log::info!("{:?}",msg);
         let mut attempts = 0;
         loop {
             // Documented not less than 5 milliseconds between messages
