@@ -1,4 +1,4 @@
-use crate::obid::*;
+use crate::obid::advanced_protocol;
 use crate::error::*;
 
 #[derive(Debug)]
@@ -18,11 +18,8 @@ pub struct AntennaState {
 }
 pub trait Connection<'a> {
     fn send_command(self: &mut Self, serial_message: advanced_protocol::HostToReader) -> Result<advanced_protocol::ReaderToHost>;
-    // fn reset(self: &mut Self) -> Result<(),()>;
 }
 
 pub trait Context<'a> {
-    type Conn: Connection<'a>;
-
-    fn connection(self: &'a Self) -> Result<Self::Conn>;
+    fn connection(self: &'a Self) -> Result<Box<dyn Connection<'a> + 'a>>;
 }

@@ -1,34 +1,40 @@
 
-mod vrp;
-mod network;
-mod conn;
-mod obid;
-mod error;
-
-use error::{Result, InternalError};
-use conn::common::*;
+use protocol_host_lib::conn::{common::*};
+#[cfg(feature = "mock")]
+use protocol_host_lib::conn::mock::MockContext;
+#[cfg(feature = "usb")]
+use protocol_host_lib::conn::usb::UsbContext;
+#[cfg(feature = "ethernet")]
+use protocol_host_lib::conn::ethernet::EthernetContext;
+use protocol_host_lib::error::*;
+use protocol_host_lib::network::{common::*, server, client};
+use protocol_host_lib::protocol::common::CommandMessage;
 
 fn start_server<'a>(conn_type: &str, protocol: &str, hostname: &str, port: i16) -> Result<()> {
-    let endpoint = network::common::NetworkContext::get_endpoint(protocol, hostname, port);
+    let endpoint = NetworkContext::get_endpoint(protocol, hostname, port);
 
     // Create various contexts needed for hardware interaction
+    #[allow(unused_variables)]
+    #[cfg(feature = "usb")]
     let libusb_context = libusb::Context::new()?;
-    let server_context = network::server::ServerContext::new(endpoint)?;
+    let server_context = server::ServerContext::new(endpoint)?;
 
     match conn_type {
         "mock" => {
-            let context = Box::new(conn::mock::MockContext::new());
-            let connection = Box::new(context.connection()?);
+            let context = Box::new(MockContext::new());
+            let connection = context.connection()?;
             start_server_with_connection(connection, &server_context)
         },
+        #[cfg(feature = "usb")]
         "usb" => {
-            let context = Box::new(conn::usb::UsbContext::new(&libusb_context)?);
-            let connection = Box::new(context.connection()?);
+            let context = Box::new(UsbContext::new(&libusb_context)?);
+            let connection = context.connection()?;
             start_server_with_connection(connection, &server_context)
         },
+        #[cfg(feature = "ethernet")]
         "ethernet" => {
-            let context = Box::new(conn::ethernet::EthernetContext::new("192.168.10.10:10001")?);
-            let connection = Box::new(context.connection()?);
+            let context = Box::new(EthernetContext::new("192.168.10.10:10001")?);
+            let connection = context.connection()?;
             start_server_with_connection(connection, &server_context)
         },
         err => {
@@ -38,8 +44,8 @@ fn start_server<'a>(conn_type: &str, protocol: &str, hostname: &str, port: i16) 
     }
 }
 
-fn start_server_with_connection<'a, 'b>(connection: Box<dyn conn::common::Connection<'a> + 'a>, server_context: &'b network::server::ServerContext) -> Result<()> {
-    let mut server = network::server::Server::new(server_context, connection).expect("Failed to initialize server");
+fn start_server_with_connection<'a, 'b>(connection: Box<dyn Connection<'a> + 'a>, server_context: &'b server::ServerContext) -> Result<()> {
+    let mut server = server::Server::new(server_context, connection).expect("Failed to initialize server");
     match server.serve() {
         Ok(reserve) => {
             log::info!("Finished serving with Ok result.");
@@ -125,7 +131,6 @@ fn main() -> Result<()> {
         .get_matches();
 
     // Configure the logger before heading off to the rest of the functionality
-    simple_logger::init().unwrap();
     let level_filter = match matches.occurrences_of("v") {
         0 => log::LevelFilter::Error,
         1 => log::LevelFilter::Info,
@@ -133,7 +138,7 @@ fn main() -> Result<()> {
         3 => log::LevelFilter::Trace,
         _ => log::LevelFilter::Trace,
     };
-    log::set_max_level(level_filter);
+    simple_logger::SimpleLogger::new().with_level(level_filter).init().unwrap();
     log::debug!("Found level_filter: {}", level_filter);
 
     // Kick off logic for the subcommands and configuration
@@ -161,14 +166,14 @@ fn main() -> Result<()> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected small integer for port");
 
-        let endpoint = network::common::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
-        let mut client = network::client::Client::new(endpoint).expect("Failed to initialize client");
+        let endpoint = NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
+        let mut client = client::Client::new(endpoint).expect("Failed to initialize client");
 
         // Send each of the commands
         let commands = String::from(matches.value_of("commands").unwrap());
         let file = std::fs::File::open(commands)?;
         let reader = std::io::BufReader::new(file);
-        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<network::common::CommandMessage>();
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<CommandMessage>();
         for command in stream {
             log::trace!("Found command: {:#?}", command);
             client.request_message(command?)?

@@ -1,0 +1,22 @@
+on:
+  push:
+    branches: [ $default-branch ]
+  pull_request:
+    branches: [ $default-branch ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+      runs-on: self-hosted
+      steps:
+          - name: Checkout Code
+            uses: actions/checkout@v2
+          - name: Get the version
+            id: vars
+            run: echo ::set-output name=tag::$(uuidgen)
+          - name: Build and Test
+            run: |
+              docker build -t protocol-host-rs:${{steps.vars.outputs.tag}} .
+              docker rmi protocol-host-rs:${{steps.vars.outputs.tag}}

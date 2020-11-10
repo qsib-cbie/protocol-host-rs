@@ -154,9 +154,7 @@ impl<'a> UsbContext<'a> {
 }
 
 impl<'a> Context<'a> for UsbContext<'a> {
-    type Conn = UsbConnection<'a>;
-
-    fn connection(self: &'a Self) -> Result<UsbConnection<'a>> {
-        Ok(UsbConnection::new(self)?)
+    fn connection(self: &'a Self) -> Result<Box<dyn Connection<'a> + 'a>> {
+        Ok(Box::new(UsbConnection::new(self)?))
     }
 }

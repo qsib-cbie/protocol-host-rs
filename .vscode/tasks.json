@@ -32,7 +32,7 @@
 			"args": [
 				"test",
 				"--package",
-				"vr_actuators_cli",
+				"protocol_host_rs",
 				"--test",
 				"tests",
 				"--",

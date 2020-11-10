@@ -10,6 +10,29 @@ This repo contains a Rust CLI for manipulating VR Actuators. This includes a dae
 
 ## Running
 
+### Feature flags
+
+The connection and protocol in use is set via cargo feature flags.
+
+The following connection types are available:
+* usb
+* ethernet
+* mock (default)
+
+The following protocol types are available:
+* haptic_v0
+* mock (default)
+
+An example invocation for a Feig Host for a Haptic V0 device might use:
+* Start an actual server: `cargo run --features "ethernet haptic_v0" -- -vvv start ... rest of the args ...`
+    * Runs over EthernetConnection and HapticV0Protocol
+* Build against feature configurations: `cargo build --features "usb"`
+    * Build requires libusb etc, and would mock protocol usage of an actual usb connection
+* Test against feature configurations: `cargo test --features "usb haptic_v0"`
+    * Build and run integration tests of HapticV0Protocol over an actual UsbConnection
+* Some won't work together: `cargo test --features "mock haptic_v0"`
+    * Responses from mock or failed connections won't work with protocols that expect pre/post conditions dependent on the connection type implementation
+
 ### Antenna Host
 
 The Feig Reader should be attached by USB to the host where we `start` a server. The command to start the antenna host may look like:
@@ -64,16 +87,16 @@ cargo run --release -- -vv start --routine rrbroker -1 tcp://0.0.0.0:6000 -2 tcp
 #### CLI Help
 View the help documents like top command help shows subcommands
 ```
-jwtrueb@dhcp-10-101-176-87 vr_actuators_cli % cargo run -- --help
-   Compiling vr_actuators_cli v0.1.0 (/Users/jwtrueb/Desktop/workspace/vr-actuators/vr_actuators_cli)
+jwtrueb@dhcp-10-101-176-87 protocol_host_rs % cargo run -- --help
+   Compiling protocol_host_rs v0.1.0 (/Users/jwtrueb/Desktop/workspace/vr-actuators/protocol_host_rs)
     Finished dev [unoptimized + debuginfo] target(s) in 4.09s
-     Running `target/debug/vr_actuators_cli --help`
+     Running `target/debug/protocol_host_rs --help`
 VR Actuators v0.1
 Jacob Trueb <jtrueb@northwestern.edu
 Manipulate VR Actuator Blocks
 
 USAGE:
-    vr_actuators_cli [FLAGS] [SUBCOMMAND]
+    protocol_host_rs [FLAGS] [SUBCOMMAND]
 
 FLAGS:
     -h, --help       Prints help information
@@ -88,14 +111,14 @@ SUBCOMMANDS:
 
 subcommand help
 ```
-jwtrueb@dhcp-10-101-176-87 vr_actuators_cli % cargo run -- start --help
+jwtrueb@dhcp-10-101-176-87 protocol_host_rs % cargo run -- start --help
     Finished dev [unoptimized + debuginfo] target(s) in 0.04s
-     Running `target/debug/vr_actuators_cli start --help`
-vr_actuators_cli-start
+     Running `target/debug/protocol_host_rs start --help`
+protocol_host_rs-start
 Starts the service that manages the connection to the VR Actuators
 
 USAGE:
-    vr_actuators_cli start [OPTIONS]
+    protocol_host_rs start [OPTIONS]
 
 FLAGS:
         --help       Prints help information
@@ -110,20 +133,20 @@ OPTIONS:
 
 #### Example Server Output
 ```
-jwtrueb@dhcp-10-101-176-87 vr_actuators_cli % cargo run --release -- -vv start --protocol tcp --hostname ubuntu20 --port 6001
+jwtrueb@dhcp-10-101-176-87 protocol_host_rs % cargo run --release -- -vv start --protocol tcp --hostname ubuntu20 --port 6001
     Finished release [optimized] target(s) in 0.04s
-     Running `target/release/vr_actuators_cli -vv start --protocol tcp --hostname ubuntu20 --port 6001`
-2020-09-02 15:12:17,703 DEBUG [vr_actuators_cli] Found level_filter: DEBUG
-2020-09-02 15:12:17,704 INFO  [vr_actuators_cli] Starting up ...
-2020-09-02 15:12:17,704 INFO  [vr_actuators_cli::network] Connected to tcp://ubuntu20:6001
-2020-09-02 15:12:17,712 DEBUG [vr_actuators_cli::network::vrp] Found Obid/Feig USB Device || Bus 020 Device 009 ID 2737 : 2
-2020-09-02 15:12:17,782 DEBUG [vr_actuators_cli::network::vrp] Claiming interface: 0
-2020-09-02 15:12:17,784 DEBUG [vr_actuators_cli::network::vrp] Claiming interface: 1
-2020-09-02 15:12:17,784 INFO  [vr_actuators_cli::network] Beginning serve() loop ...
-2020-09-02 15:12:22,733 INFO  [vr_actuators_cli::network] Received SetRadioFreqPower command for power_level 0.
-2020-09-02 15:12:22,740 DEBUG [vr_actuators_cli::network::vrp] Sent Serial Command with 44 bytes: 02002cff8b020101011e0003000884800000000000000000008100000000000000000000000000000000a7e6
-2020-09-02 15:12:22,760 DEBUG [vr_actuators_cli::network::vrp] Received Response to Serial Command with 8 bytes: 020008008b009a8d
-2020-09-02 15:12:22,760 INFO  [vr_actuators_cli::network::vrp] Received response: ReaderToHost {
+     Running `target/release/protocol_host_rs -vv start --protocol tcp --hostname ubuntu20 --port 6001`
+2020-09-02 15:12:17,703 DEBUG [protocol_host_rs] Found level_filter: DEBUG
+2020-09-02 15:12:17,704 INFO  [protocol_host_rs] Starting up ...
+2020-09-02 15:12:17,704 INFO  [protocol_host_rs::network] Connected to tcp://ubuntu20:6001
+2020-09-02 15:12:17,712 DEBUG [protocol_host_rs::network::vrp] Found Obid/Feig USB Device || Bus 020 Device 009 ID 2737 : 2
+2020-09-02 15:12:17,782 DEBUG [protocol_host_rs::network::vrp] Claiming interface: 0
+2020-09-02 15:12:17,784 DEBUG [protocol_host_rs::network::vrp] Claiming interface: 1
+2020-09-02 15:12:17,784 INFO  [protocol_host_rs::network] Beginning serve() loop ...
+2020-09-02 15:12:22,733 INFO  [protocol_host_rs::network] Received SetRadioFreqPower command for power_level 0.
+2020-09-02 15:12:22,740 DEBUG [protocol_host_rs::network::vrp] Sent Serial Command with 44 bytes: 02002cff8b020101011e0003000884800000000000000000008100000000000000000000000000000000a7e6
+2020-09-02 15:12:22,760 DEBUG [protocol_host_rs::network::vrp] Received Response to Serial Command with 8 bytes: 020008008b009a8d
+2020-09-02 15:12:22,760 INFO  [protocol_host_rs::network::vrp] Received response: ReaderToHost {
     stx: PhantomData,
     alength: 8,
     com_adr: 0,
@@ -132,22 +155,22 @@ jwtrueb@dhcp-10-101-176-87 vr_actuators_cli % cargo run --release -- -vv start -
     data: [],
     crc16: 36250,
 }
-2020-09-02 15:12:22,804 INFO  [vr_actuators_cli::network] Received SystemReset.
-2020-09-02 15:12:22,810 DEBUG [vr_actuators_cli::network::vrp] Sent Serial Command with 8 bytes: 020008ff64003821
-2020-09-02 15:12:22,815 DEBUG [vr_actuators_cli::network::vrp] Received Response to Serial Command with 8 bytes: 020008006400cbe7
+2020-09-02 15:12:22,804 INFO  [protocol_host_rs::network] Received SystemReset.
+2020-09-02 15:12:22,810 DEBUG [protocol_host_rs::network::vrp] Sent Serial Command with 8 bytes: 020008ff64003821
+2020-09-02 15:12:22,815 DEBUG [protocol_host_rs::network::vrp] Received Response to Serial Command with 8 bytes: 020008006400cbe7
 ```
 
 #### Example Client Output
 ```
-jwtrueb@dhcp-10-101-176-87 vr_actuators_cli % cargo run --release -- -vv command --protocol tcp --hostname ubuntu20 --port 6000 commands/set-power-0.txt
+jwtrueb@dhcp-10-101-176-87 protocol_host_rs % cargo run --release -- -vv command --protocol tcp --hostname ubuntu20 --port 6000 commands/set-power-0.txt
     Finished release [optimized] target(s) in 0.08s
-     Running `target/release/vr_actuators_cli -vv command --protocol tcp --hostname ubuntu20 --port 6000 commands/set-power-0.txt`
-2020-09-02 15:11:17,690 DEBUG [vr_actuators_cli] Found level_filter: DEBUG
-2020-09-02 15:11:17,691 INFO  [vr_actuators_cli] Running command: command
-2020-09-02 15:11:17,691 INFO  [vr_actuators_cli::network] Connected to tcp://ubuntu20:6000
+     Running `target/release/protocol_host_rs -vv command --protocol tcp --hostname ubuntu20 --port 6000 commands/set-power-0.txt`
+2020-09-02 15:11:17,690 DEBUG [protocol_host_rs] Found level_filter: DEBUG
+2020-09-02 15:11:17,691 INFO  [protocol_host_rs] Running command: command
+2020-09-02 15:11:17,691 INFO  [protocol_host_rs::network] Connected to tcp://ubuntu20:6000
 2020-09-02 15:11:20,192 DEBUG [zmq] socket dropped
 2020-09-02 15:11:20,192 DEBUG [zmq] context dropped
-jwtrueb@dhcp-10-101-176-87 vr_actuators_cli % echo $?
+jwtrueb@dhcp-10-101-176-87 protocol_host_rs % echo $?
 0
 ```
 

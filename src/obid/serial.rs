@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn host_to_reader_no_data() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
 
         let data = vec![];
         let mut expected_msg = advanced_protocol::HostToReader::new(0, 0, 0,  &data[..], 0, false);
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn host_to_reader_some_data() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
 
         let data = vec![1; 10];
         let mut expected_msg = advanced_protocol::HostToReader::new(0, 0, 0,  &data[..], 0, false);
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn reader_to_host_no_data() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
 
         let data = vec![];
         let mut expected_msg = advanced_protocol::ReaderToHost::new(8, 0, 0, 0, &data[..], 0);
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn reader_to_host_some_data() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
 
         let data = vec![1; 100];
         let mut expected_msg = advanced_protocol::ReaderToHost::new(8, 0, 0, 0, &data[..], 0);
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn reader_to_host_alotta_data() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
 
         let data = vec![1; 10000];
         let mut expected_msg = advanced_protocol::ReaderToHost::new(8, 0, 0, 0, &data[..], 0);
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn reader_to_host_bad_crc() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
 
         let data = vec![1; 100];
         let mut expected_msg = advanced_protocol::ReaderToHost::new(8, 0, 0, 0, &data[..], 0);
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn reader_to_host_too_short() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
 
         let data = vec![1; 100];
         let mut expected_msg = advanced_protocol::ReaderToHost::new(8, 0, 0, 0, &data[..], 0);
