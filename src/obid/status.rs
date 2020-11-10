@@ -64,7 +64,7 @@ pub enum Status {
     /// Before writing onto the EEPROM a faulty checksum of parameters has been detected. Parameter-Range-Error:
     /// The value range of the parameters was exceeded.
     EepromFailure = 0x10,
-  
+
     /// The value range of the parameters was exceeded.
     ParameterRangeError = 0x11,
 
@@ -118,7 +118,7 @@ pub enum Status {
     /// The environment is too noisy.
     /// The RF power doesn‟t have the configured value.
     RFWarning = 0x84,
- 
+
     /// There is no valid data in the Buffered Read Mode.
     /// There is no Transponder in the antenna field.
     /// The VALID-TIME1 hasn‟t elapsed for Transponders in the antenna field.
@@ -165,9 +165,9 @@ impl From<u8> for Status {
             0x93 => { Status::DataBufferOverflow },
             0x94 => { Status::MoreData },
             0x95 => { Status::TagError },
-            _ => { 
+            _ => {
                 log::error!("Invalid code for Obid Status codes");
-                Status::Invalid 
+                Status::Invalid
             },
         }
     }

@@ -1,6 +1,8 @@
 extern crate vr_actuators_cli;
 
 use std::{sync::mpsc, thread, time::Duration};
+use vr_actuators_cli::conn::common::Context;
+use vr_actuators_cli::error::*;
 
 fn panic_after<T, F>(d: Duration, f: F) -> T
 where
@@ -22,9 +24,9 @@ where
 }
 
 
-fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>, conn_type: &'static str) -> Result<()> {
     // Multiple tests may attempt to re-register the logger
-    let _ = simple_logger::init_with_level(log::Level::Info);
+    let _ = simple_logger::init_with_level(log::Level::Debug);
 
     panic_after(Duration::from_millis(timeout), move || {
         let proxy_front_endpoint = std::sync::Mutex::new(String::from(""));
@@ -41,15 +43,15 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
 
         let ctx = zmq::Context::new();
         let publisher = ctx.socket(zmq::PUB).unwrap();
-        let any_local_endpoint = vr_actuators_cli::network::NetworkContext::get_endpoint("tcp", "*", 0);
+        let any_local_endpoint = vr_actuators_cli::network::common::NetworkContext::get_endpoint("tcp", "*", 0);
         publisher.bind(any_local_endpoint.as_str()).unwrap();
         let control_endpoint = publisher.get_last_endpoint().unwrap().unwrap();
         log::info!("Bound control to {:?}", control_endpoint);
 
-        let proxy_handle = std::thread::spawn(move || -> Result<(), ()> {
+        let proxy_handle = std::thread::spawn(move || -> () {
             log::info!("Starting proxy ...");
 
-            let any_local_endpoint = vr_actuators_cli::network::NetworkContext::get_endpoint("tcp", "*", 0);
+            let any_local_endpoint = vr_actuators_cli::network::common::NetworkContext::get_endpoint("tcp", "*", 0);
             let ctx = zmq::Context::new();
 
             let mut front = ctx.socket(zmq::ROUTER).unwrap();
@@ -76,58 +78,75 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
             }
 
             assert!(zmq::proxy_steerable(&mut front, &mut back, &mut control).is_ok());
-            Ok(())
+            ()
         });
 
-        let server_handle = std::thread::spawn(move || -> Result<(), ()>  {
-            log::info!("Starting server ...");
+        let server_handle = std::thread::spawn(move || -> ()  {
+            let work = move || -> Result<()> {
+                log::info!("Starting server ...");
 
-            let endpoint;
-            loop {
-                {
-                    let guard = server_endpoint.lock().unwrap();
-                    if !guard.is_empty() {
-                        endpoint = guard.clone();
-                        break;
+                let endpoint;
+                loop {
+                    {
+                        let guard = server_endpoint.lock().unwrap();
+                        if !guard.is_empty() {
+                            endpoint = guard.clone();
+                            break;
+                        }
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                
+                loop {
+                    let libusb_context = libusb::Context::new()?;
+                    //Lifetime issues if not outside match statement
+                    let usbcontext = Box::new(vr_actuators_cli::conn::usb::UsbContext::new(&libusb_context)?);  
+                    
+                    let server_context = vr_actuators_cli::network::server::ServerContext::new((&endpoint).clone())?;
+                    
+                    let conn: Box<dyn vr_actuators_cli::conn::common::Connection> = match conn_type {
+                        "mock" => {
+                            let context = Box::new(vr_actuators_cli::conn::mock::MockContext::new());
+                            Box::new(context.connection()?)
+                        },
+                        "usb" => {
+                            Box::new(usbcontext.connection()?)
+                        },
+                        "ethernet" => {
+                            let context = Box::new(vr_actuators_cli::conn::ethernet::EthernetContext::new("192.168.10.10:10001")?);
+                            Box::new(context.connection()?)
+                        },
+                        _ => {return Err(InternalError::from("No conn_type"));},
+                    };
+
+                    let mut server = vr_actuators_cli::network::server::Server::new(&server_context, conn)?;
+
+                    let endpoint = server.get_last_endpoint();
+                    log::info!("Server connected to: {}", endpoint);
+                    {
+                        *server_endpoint.lock().unwrap() = endpoint;
+                    }
+
+                    match server.serve() {
+                        Ok(false) => {
+                            log::info!("Finished serving with Ok result.");
+                            return Ok(());
+                        },
+                        Ok(true) => {
+                            log::info!("Continuing serve loop");
+                        }
+                        Err(err) => {
+                            log::error!("Failed to server: {}", err);
+                            return Err(err);
+                        }
                     }
                 }
-
-                std::thread::sleep(std::time::Duration::from_millis(100));
+            };
+            match work() {
+                Err(err) => panic!("{}",err),
+                _ => ()
             }
-
-            let server_context = vr_actuators_cli::network::ServerContext::new(endpoint);
-            match server_context {
-                Ok(_) => {}
-                Err(_) => { return Err(()); }
-            }
-            let server_context = server_context.unwrap();
-            let server = vr_actuators_cli::network::Server::new(&server_context);
-            match &server {
-                Ok(_) => {}
-                Err(err) => { 
-                    log::error!("Failed to initialize server: {}", err);
-                    return Err(());
-                }
-            }
-            let mut server = server.unwrap();
-
-            let endpoint = server.get_last_endpoint();
-            log::info!("Server connected to: {}", endpoint); 
-            {
-                *server_endpoint.lock().unwrap() = endpoint;
-            }
-
-            match server.serve() {
-                Ok(_) => {
-                    log::info!("Finished serving with Ok result.");
-                },
-                Err(err) => {
-                    log::error!("Failed to server: {}", err);
-                    panic!(format!("Encountered error: {}", err));
-                }
-            }
-            
-            Ok(())
         });
 
         let client_handle = std::thread::spawn(move || {
@@ -146,7 +165,7 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
 
             log::info!("Starting client ...");
 
-            let client = vr_actuators_cli::network::Client::new(endpoint);
+            let client = vr_actuators_cli::network::client::Client::new(endpoint);
             assert!(client.is_ok());
             let mut client = client.unwrap();
 
@@ -159,14 +178,13 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
             }
 
             for command in &client_commands {
-                let command_stream = serde_json::Deserializer::from_str(command.as_str()).into_iter::<vr_actuators_cli::network::CommandMessage>();
+                let command_stream = serde_json::Deserializer::from_str(command.as_str()).into_iter::<vr_actuators_cli::network::common::CommandMessage>();
                 for command in command_stream {
                     assert!(command.is_ok());
                     let result = client.request_message(command.unwrap());
                     assert!(result.is_ok());
                 }
             }
-
             ()
         });
 
@@ -190,40 +208,59 @@ fn connect_client_to_server(timeout: u64, client_commands: std::vec::Vec<String>
 }
 
 #[test]
-fn nop_serve_to_client() -> Result<(), Box<dyn std::error::Error>> {
-    connect_client_to_server(2000, vec![])
+fn nop_serve_to_client() -> Result<()> {
+    connect_client_to_server(2000, vec![]
+        // ,"mock")
+    ,"ethernet")
 }
 
 #[test]
-fn connect_to_fabric() -> Result<(), Box<dyn std::error::Error>> {
-    connect_client_to_server(5000, vec![
+fn system_reset() -> Result<()> {
+    connect_client_to_server(15000, vec![
+        String::from(r#"{ "SystemReset": { } }"#),
+    ]
+    // ,"mock")
+    ,"ethernet")
+}
+
+#[test]
+fn connect_to_fabric() -> Result<()> {
+    connect_client_to_server(10000, vec![
         String::from(r#"{ "AddFabric": { "fabric_name": "Obid Feig LRM2500-B" } }"#),
-    ])
+    ]
+    // ,"mock")
+    ,"ethernet")
 }
 
 #[test]
-fn set_the_power_level() -> Result<(), Box<dyn std::error::Error>> {
-    connect_client_to_server(5000, vec![
+fn set_the_power_level() -> Result<()> {
+    connect_client_to_server(10000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 4 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ])
+    ]
+    // ,"mock")
+    ,"ethernet")
 }
 
 #[test]
-fn set_the_power_level_low_power() -> Result<(), Box<dyn std::error::Error>> {
+fn set_the_power_level_low_power() -> Result<()> {
     connect_client_to_server(5000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 0 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ])
+    ]
+    ,"mock")
+    // ,"ethernet")
 }
 
 #[test]
-fn e2e_pulsing_after_antenna_reset() -> Result<(), Box<dyn std::error::Error>> {
+fn e2e_pulsing_after_antenna_reset() -> Result<()> {
     // Reset the conditions of the antenna
-    connect_client_to_server(5000, vec![
+    connect_client_to_server(10000, vec![
         String::from(r#"{ "SetRadioFreqPower": { "power_level": 2 } }"#),
         String::from(r#"{ "SystemReset": { } }"#),
-    ])?;
+    ]
+    // ,"mock")?;
+    ,"ethernet")?;
 
     // Allow the antenna time to come back online
     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -233,9 +270,9 @@ fn e2e_pulsing_after_antenna_reset() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
+fn e2e_pulsing() -> Result<()> {
     // Issues commands to enable all actuators in the single fabric of 36 in continuous 50 ms on 50 ms off
-    let op_mode_block = vr_actuators_cli::vrp::OpModeBlock {
+    let op_mode_block = vr_actuators_cli::vrp::vrp::OpModeBlock {
         act_cnt32: 0x02, // ceil(36.0 / 32.0) = 2
         act_mode: 0x00,
         op_mode: 0x02,
@@ -244,26 +281,26 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
 
     let hf_duty_cycle = 30;
     let hf_period = 150;
-    let actuator_mode_blocks = vr_actuators_cli::vrp::ActuatorModeBlocks {
-        block0_31: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+    let actuator_mode_blocks = vr_actuators_cli::vrp::vrp::ActuatorModeBlocks {
+        block0_31: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x0F, // Enable all 8 acutators
             b1: 0x00, // Enable all 8 acutators
             b2: 0x00, // Enable all 8 acutators
             b3: 0x00, // Enable all 8 acutators
         }),
-        block32_63: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+        block32_63: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x00, // Enable last 4 actuators
             b1: 0x00,
             b2: 0x00,
             b3: 0x00,
         }),
-        block64_95: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+        block64_95: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
             b3: 0x00,
         }),
-        block96_127: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+        block96_127: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
@@ -272,14 +309,14 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
     };
     let actuator_mode_blocks = serde_json::to_string(&actuator_mode_blocks)?;
 
-    let timer_mode_blocks = vr_actuators_cli::vrp::TimerModeBlocks {
+    let timer_mode_blocks = vr_actuators_cli::vrp::vrp::TimerModeBlocks {
        /*
-        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on. 
+        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on.
         * The high frequency signal (carrier) timing is given by block 6 (0x18).
         *
-        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing 
+        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing
         */
-        single_pulse_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
+        single_pulse_block: Some(vr_actuators_cli::vrp::vrp::TimerModeBlock {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
@@ -287,12 +324,12 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode. 
-         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode.
+         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
         */
-        hf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
+        hf_block: Some(vr_actuators_cli::vrp::vrp::TimerModeBlock {
             b0: ((hf_duty_cycle & 0x00FF)) as u8,
             b1: ((hf_duty_cycle & 0xFF00) >> 8) as u8,
             b2: ((hf_period & 0x00FF)) as u8,
@@ -300,12 +337,12 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal. 
-         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal.
+         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
          */
-        lf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
+        lf_block: Some(vr_actuators_cli::vrp::vrp::TimerModeBlock {
             b0: 0xFF, // ((4000 & 0x00FF)) as u8,
             b1: 0xFF, // ((4000 & 0xFF00) >> 8) as u8,
             b2: 0xFF, // ((4000 & 0x00FF)) as u8,
@@ -319,15 +356,17 @@ fn e2e_pulsing() -> Result<(), Box<dyn std::error::Error>> {
         String::from(r#"{ "AddFabric": { "fabric_name": "Jacob's Test Actuator Block of 36" } }"#),
         String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {}, "actuator_mode_blocks": {}, "timer_mode_blocks": {} }} }}"#, op_mode_block, actuator_mode_blocks, timer_mode_blocks)),
         // String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {} }} }}"#, op_mode_block)),
-    ])?;
+    ]
+    // ,"mock")?;
+    ,"ethernet")?;
 
     Ok(())
 }
 
 #[test]
-fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
+fn send_all_off() -> Result<()> {
     // Issues commands to enable all actuators in the single fabric of 36 in continuous 50 ms on 50 ms off
-    let op_mode_block = vr_actuators_cli::vrp::OpModeBlock {
+    let op_mode_block = vr_actuators_cli::vrp::vrp::OpModeBlock {
         act_cnt32: 0x02, // ceil(36.0 / 32.0) = 2
         act_mode: 0x00,
         op_mode: 0x00,
@@ -336,26 +375,26 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
 
     let hf_duty_cycle = 30;
     let hf_period = 150;
-    let actuator_mode_blocks = vr_actuators_cli::vrp::ActuatorModeBlocks {
-        block0_31: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+    let actuator_mode_blocks = vr_actuators_cli::vrp::vrp::ActuatorModeBlocks {
+        block0_31: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x00, // Enable all 8 acutators
             b1: 0x00, // Enable all 8 acutators
             b2: 0x00, // Enable all 8 acutators
             b3: 0x00, // Enable all 8 acutators
         }),
-        block32_63: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+        block32_63: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x00, // Enable last 4 actuators
             b1: 0x00,
             b2: 0x00,
             b3: 0x00,
         }),
-        block64_95: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+        block64_95: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
             b3: 0x00,
         }),
-        block96_127: Some(vr_actuators_cli::vrp::ActuatorModeBlock {
+        block96_127: Some(vr_actuators_cli::vrp::vrp::ActuatorModeBlock {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
@@ -364,14 +403,14 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
     };
     let actuator_mode_blocks = serde_json::to_string(&actuator_mode_blocks)?;
 
-    let timer_mode_blocks = vr_actuators_cli::vrp::TimerModeBlocks {
+    let timer_mode_blocks = vr_actuators_cli::vrp::vrp::TimerModeBlocks {
        /*
-        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on. 
+        * In single pulse operation, the variable t_pulse[ms] (16 bits) determines the time the pulse will remain on.
         * The high frequency signal (carrier) timing is given by block 6 (0x18).
-        * 
-        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing 
+        *
+        * In gestures, t_pulse[ms] (16 bits) and t_pause[ms] (16 bits) control the the on and pause timing
         */
-        single_pulse_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
+        single_pulse_block: Some(vr_actuators_cli::vrp::vrp::TimerModeBlock {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
@@ -379,12 +418,12 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode. 
-         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * This block gives the timing condition for the high frequency signal option used in single pulse or continuous mode.
+         * It is given by the period T_high(ms) [16 bit] and duty cycle ton_high(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
         */
-        hf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
+        hf_block: Some(vr_actuators_cli::vrp::vrp::TimerModeBlock {
             b0: ((hf_duty_cycle & 0x00FF)) as u8,
             b1: ((hf_duty_cycle & 0xFF00) >> 8) as u8,
             b2: ((hf_period & 0x00FF)) as u8,
@@ -392,12 +431,12 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
         }),
 
         /*
-         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal. 
-         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits]. 
-         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller. 
+         * In continuous mode, there is an option for continuous pulsed mode. This block gives the timing condition for the low frequency signal.
+         * It is given by the period T_low(ms) [16 bit] and duty cycle ton_low(ms) [16 bits].
+         * The duty cycle is given in time on instead of % of period to avoid calculations in the microcontroller.
          * If ton_high is equal to the T_high, this high frequency signal is overridden by software in the microcontroller.
          */
-        lf_block: Some(vr_actuators_cli::vrp::TimerModeBlock {
+        lf_block: Some(vr_actuators_cli::vrp::vrp::TimerModeBlock {
             b0: 0xFF, // ((4000 & 0x00FF)) as u8,
             b1: 0xFF, // ((4000 & 0xFF00) >> 8) as u8,
             b2: 0xFF, // ((4000 & 0x00FF)) as u8,
@@ -411,7 +450,9 @@ fn send_all_off() -> Result<(), Box<dyn std::error::Error>> {
         String::from(r#"{ "AddFabric": { "fabric_name": "Jacob's Test Actuator Block of 36" } }"#),
         String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {}, "actuator_mode_blocks": {}, "timer_mode_blocks": {} }} }}"#, op_mode_block, actuator_mode_blocks, timer_mode_blocks)),
         // String::from(format!(r#"{{ "ActuatorsCommand": {{  "fabric_name": "Jacob's Test Actuator Block of 36", "op_mode_block": {} }} }}"#, op_mode_block)),
-    ])?;
+    ]
+    // ,"mock")?;
+    ,"ethernet")?;
 
     Ok(())
 }

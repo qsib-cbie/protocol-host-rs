@@ -1,6 +1,61 @@
-mod network;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+mod vrp;
+mod network;
+mod conn;
+mod obid;
+mod error;
+
+use error::{Result, InternalError};
+use conn::common::*;
+
+fn start_server<'a>(conn_type: &str, protocol: &str, hostname: &str, port: i16) -> Result<()> {
+    let endpoint = network::common::NetworkContext::get_endpoint(protocol, hostname, port);
+
+    // Create various contexts needed for hardware interaction
+    let libusb_context = libusb::Context::new()?;
+    let server_context = network::server::ServerContext::new(endpoint)?;
+
+    match conn_type {
+        "mock" => {
+            let context = Box::new(conn::mock::MockContext::new());
+            let connection = Box::new(context.connection()?);
+            start_server_with_connection(connection, &server_context)
+        },
+        "usb" => {
+            let context = Box::new(conn::usb::UsbContext::new(&libusb_context)?);
+            let connection = Box::new(context.connection()?);
+            start_server_with_connection(connection, &server_context)
+        },
+        "ethernet" => {
+            let context = Box::new(conn::ethernet::EthernetContext::new("192.168.10.10:10001")?);
+            let connection = Box::new(context.connection()?);
+            start_server_with_connection(connection, &server_context)
+        },
+        err => {
+            log::error!("Invalid connection type: {} not supported", err);
+            return Err(InternalError::from(String::from("Invalid connection Type")));
+        }
+    }
+}
+
+fn start_server_with_connection<'a, 'b>(connection: Box<dyn conn::common::Connection<'a> + 'a>, server_context: &'b network::server::ServerContext) -> Result<()> {
+    let mut server = network::server::Server::new(server_context, connection).expect("Failed to initialize server");
+    match server.serve() {
+        Ok(reserve) => {
+            log::info!("Finished serving with Ok result.");
+            if !reserve {
+                return Ok(());
+            }
+        },
+        Err(err) => {
+            log::error!("Encountered error: {}", err);
+        }
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<()> {
     // Define the acceptable user input behavior
     let matches = clap::App::new("VR Actuators")
         .version("v0.1")
@@ -12,6 +67,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .help("Sets the level of verbosity"))
         .subcommand(clap::App::new("start")
             .about("Starts the service that manages the connection to the VR Actuators")
+            .arg(clap::Arg::with_name("conn_type")
+                .short("c")
+                .long("conn-type")
+                .value_name("CONN_TYPE")
+                .default_value("usb")
+                .help("The type of connection that will be attempted")
+                .takes_value(true))
             .arg(clap::Arg::with_name("hostname")
                 .short("h")
                 .long("hostname")
@@ -63,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_matches();
 
     // Configure the logger before heading off to the rest of the functionality
-    simple_logger::init().unwrap(); 
+    simple_logger::init().unwrap();
     let level_filter = match matches.occurrences_of("v") {
         0 => log::LevelFilter::Error,
         1 => log::LevelFilter::Info,
@@ -80,28 +142,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::trace!("Start Params: {:#?}", matches);
 
         // Start listening for connections
-        let protocol = String::from(matches.value_of("protocol").unwrap());
-        let hostname = String::from(matches.value_of("hostname").unwrap());
-        let port = String::from(matches.value_of("port").unwrap());
+        let conn_type = matches.value_of("conn_type").unwrap();
+        let protocol = matches.value_of("protocol").unwrap();
+        let hostname = matches.value_of("hostname").unwrap();
+        let port = matches.value_of("port").unwrap();
         let port: i16 = port.parse().expect("Expected a small integer for port");
 
         loop {
-            let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
-            let server_context = network::ServerContext::new(endpoint)?;
-            let mut server = network::Server::new(&server_context).expect("Failed to initialize server");
-            match server.serve() {
-                Ok(reserve) => {
-                    log::info!("Finished serving with Ok result.");
-                    if !reserve {
-                        return Ok(());
-                    }
-                },
-                Err(err) => {
-                    log::error!("Encountered error: {}", err);
-                }
-            }
+            start_server(conn_type, protocol, hostname, port)?;
         }
-
     } else if let Some(matches) = matches.subcommand_matches("command") {
         log::info!("Running command: {}", "command");
         log::trace!("Command Params: {:#?}", matches);
@@ -112,14 +161,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let port = String::from(matches.value_of("port").unwrap());
         let port: i16 = port.parse().expect("Expected small integer for port");
 
-        let endpoint = network::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
-        let mut client = network::Client::new(endpoint).expect("Failed to initialize client");
+        let endpoint = network::common::NetworkContext::get_endpoint(protocol.as_str(), hostname.as_str(), port);
+        let mut client = network::client::Client::new(endpoint).expect("Failed to initialize client");
 
         // Send each of the commands
         let commands = String::from(matches.value_of("commands").unwrap());
         let file = std::fs::File::open(commands)?;
         let reader = std::io::BufReader::new(file);
-        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<network::CommandMessage>();
+        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<network::common::CommandMessage>();
         for command in stream {
             log::trace!("Found command: {:#?}", command);
             client.request_message(command?)?

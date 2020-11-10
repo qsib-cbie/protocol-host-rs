@@ -1,10 +1,9 @@
 #![allow(dead_code)]
 
 use serde::{Serialize, Deserialize};
-use serial::{ObidSerialReceivable, ObidSerialSendable};
-
-#[path = "serial.rs"] mod serial;
-#[path = "obid.rs"] mod obid;
+use crate::obid::*;
+use crate::conn::{common::Connection};
+use crate::error::*;
 
 #[derive(Debug)]
 pub struct ObidTransponder {
@@ -161,111 +160,31 @@ impl std::fmt::Debug for Fabric {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Fabric(name: '{}')", self.name)
     }
-
 }
 
-impl Fabric {
-    pub fn new(conn: &mut UsbConnection, name: &str) -> Result<Fabric, Box<dyn std::error::Error>> {
+impl Fabric {//switch passed arg to protocol?
+    pub fn new(protocol: &mut HapticProtocol, name: &str) -> Result<Fabric> {
         let mut fabric = Fabric {
             name: String::from(name),
             transponders: smallvec::smallvec![],
             state: FabricState::new(name),
         };
 
-        fabric.transponders = conn.get_inventory(true)?;
+        fabric.transponders = protocol.get_inventory(true)?;
 
         Ok(fabric)
     }
 }
 
-/// Feig-based Connections are documented here
-/// http://www.sebeto.com/intranet/ftpscambio/RFID_FEIG/Readers/ID%20ISC%20LR2500/Documentation/H01112-0e-ID-B.pdf
 
-pub struct UsbConnection<'a> {
-    state: AntennaState,
-    device_handle: libusb::DeviceHandle<'a>,
-    response_message_buffer: std::vec::Vec<u8>,
-
-    usb_ctx: &'a libusb::Context,
+pub struct HapticProtocol<'a> {
+    conn: Box<dyn Connection<'a> + 'a >,
 }
-
-#[derive(Debug)]
-pub struct AntennaState {
-    /// A Usb Connection manipulates a Feig reader and an NFC antenna
-
-    antenna_id: Option<String>,
-    pulse_mode: Option<i32>,
-    hf_mod: Option<i32>,
-    lf_mod: Option<i32>,
-    act_block_count: Option<i32>,
-
-    op_mode: Option<String>,
-    act_mode: Option<String>,
-
-    max_attempts: i32,
-}
-
-impl<'a> UsbConnection<'a> {
-    pub fn new(ctx: &'a libusb::Context) -> Result<UsbConnection<'a>, Box<dyn std::error::Error>> {
-        for _ in 0..10 {
-            for device in ctx.devices()?.iter() {
-                let device_desc = device.device_descriptor()?;
-                log::trace!("Found USB Device || Bus {:03} Device {:03} ID {} : {}",
-                device.bus_number(),
-                device.address(),
-                device_desc.vendor_id(),
-                device_desc.product_id());
-
-                if device_desc.vendor_id() == 2737 {
-                    log::debug!("Found Obid/Feig USB Device || Bus {:03} Device {:03} ID {} : {}",
-                        device.bus_number(),
-                        device.address(),
-                        device_desc.vendor_id(),
-                        device_desc.product_id());
-
-                    let mut device_handle = device.open()?;
-                    device_handle.reset()?;
-                    for interface in device.active_config_descriptor()?.interfaces() {
-                        let interface_number = interface.number();
-                        if device_handle.kernel_driver_active(interface_number)? {
-                            log::debug!("Detaching kernel from interface: {}", interface_number);
-                            device_handle.detach_kernel_driver(interface_number)?;
-                        }
-                        log::debug!("Claiming interface: {}", interface_number);
-                        device_handle.claim_interface(interface_number)?;
-                         for interface_descriptor in interface.descriptors() {
-                            log::trace!("Interface Descriptor of {}: {:#?}", interface_number, interface_descriptor);
-                            for endpoint_descriptor in interface_descriptor.endpoint_descriptors() {
-                                log::trace!("Endpoint Descriptor of {}: {:#?}", interface_number, endpoint_descriptor);
-                            }
-                        }
-                    }
-
-                    return Ok(UsbConnection {
-                        device_handle: device_handle,
-                        state: AntennaState {
-                            antenna_id: None,
-                            pulse_mode: None,
-                            hf_mod: None,
-                            lf_mod: None,
-
-                            op_mode: None,
-                            act_mode: None,
-                            act_block_count: None,
-
-                            max_attempts: 5
-                        },
-                        response_message_buffer: vec![0; 1024 * 1024 * 64],
-                        usb_ctx: ctx,
-                    });
-                }
-            }
-
-            log::error!("No matching USB device found ...");
-            std::thread::sleep(std::time::Duration::from_secs(1));
+impl<'a> HapticProtocol<'a> {
+    pub fn new(conn: Box<dyn Connection<'a> + 'a>) -> HapticProtocol<'a> {
+        HapticProtocol {
+            conn,
         }
-
-        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "No matching USB device found")));
     }
 
    /**
@@ -276,10 +195,10 @@ impl<'a> UsbConnection<'a> {
      *
      * @return transponders in the array
      */
-    pub fn get_inventory(self: &mut Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>, Box<dyn std::error::Error>> {
+    pub fn get_inventory(self: &mut Self, expect_device: bool) -> Result<smallvec::SmallVec<[ObidTransponder; 2]>> {
         log::trace!("Requesting inventory ids ...");
-        let inventory_request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, expect_device);
-        let inventory_response = self.send_command(inventory_request)?;
+        let inventory_request = advanced_protocol::HostToReader::new(0, 0xFF, 0xB0, vec![0x01, 0x00].as_slice(), 0, expect_device);
+        let inventory_response = self.conn.send_command(inventory_request)?;
         log::debug!("Received inventory_response: {:#?}", inventory_response);
 
         if inventory_response.status == 0 && inventory_response.data.len() > 0 {
@@ -287,13 +206,13 @@ impl<'a> UsbConnection<'a> {
             let encoded_transponders = inventory_response.data[0];
             let bytes_per_transponder = 1 + 1 + 8; // tr_type, dsfid, uid
             if inventory_response.data.len() != 1 + (encoded_transponders as usize) * (bytes_per_transponder as usize) {
-                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Unexpected data format in response to inventory request")));
+                return Err(InternalError::from("Unexpected data format in response to inventory request"));
             }
 
             for i in 0..encoded_transponders {
                 let begin = (1 + bytes_per_transponder * i) as usize;
                 let end = begin + bytes_per_transponder as usize;
-                let encoded_transponder_slice = &inventory_response.data[begin..end]; 
+                let encoded_transponder_slice = &inventory_response.data[begin..end];
                 let tr_type = encoded_transponder_slice[0];
                 let tr_type_rf_tec = (tr_type & 0b1100_0000) >> 6;
                 let tr_type_type_no = tr_type & 0b0000_1111;
@@ -316,7 +235,7 @@ impl<'a> UsbConnection<'a> {
     }
 
     /// Set the wattage for the RF power on the antenna
-    pub fn set_radio_freq_power(self: &mut Self, rf_power: u8) ->  Result<(), Box<dyn std::error::Error>> {
+    pub fn set_radio_freq_power(self: &mut Self, rf_power: u8) ->  Result<()> {
         log::trace!("Requesting RF power set to {} ...", rf_power);
         /*
          * RF Power format: 0bX0111111
@@ -362,51 +281,51 @@ impl<'a> UsbConnection<'a> {
 
 
 
-        let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0x8B, data.as_slice(), 0, false);
-        let response = self.send_command(request)?;
+        let request = advanced_protocol::HostToReader::new(0, 0xFF, 0x8B, data.as_slice(), 0, false);
+        let response = self.conn.send_command(request)?;
         log::debug!("Received response: {:#?}", response);
         if response.status == 0x11 {
             let error_message = "A reasonableness check failed while writing the RF power parameter to the reader" ;
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+            Err(InternalError::from(error_message))
         } else {
             Ok(())
         }
     }
 
-    pub fn system_reset(self: &mut Self)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn system_reset(self: &mut Self)  -> Result<()> {
         log::trace!("Requesting System Reset of RF controller ...");
-        let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, 0x64, vec![0].as_slice(), 0, false);
-        let response = self.send_command(request)?;
+        let request = advanced_protocol::HostToReader::new(0, 0xFF, 0x64, vec![0].as_slice(), 0, false);
+        let response = self.conn.send_command(request)?;
 
-        let status = obid::Status::from(response.status);
-        if status != obid::Status::Ok {
+        let status = Status::from(response.status);
+        if status != Status::Ok {
             let error_message = format!("System reset failed with status code: {:?}.", status);
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+            Err(InternalError::from(error_message))
         } else {
             Ok(())
         }
     }
 
-    pub fn custom_command(self: &mut Self, control_byte: u8, data: &[u8], device_required: bool)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn custom_command(self: &mut Self, control_byte: u8, data: &[u8], device_required: bool)  -> Result<()> {
         log::trace!("Requesting Custom Command with control_byte {:#X?} and data {:#X?} ...", control_byte, data);
 
-        let request = serial::advanced_protocol::HostToReader::new(0, 0xFF, control_byte, data, 0, device_required);
-        let response = self.send_command(request)?;
+        let request = advanced_protocol::HostToReader::new(0, 0xFF, control_byte, data, 0, device_required);
+        let response = self.conn.send_command(request)?;
 
-        let status = obid::Status::from(response.status);
-        if status != obid::Status::Ok {
+        let status = Status::from(response.status);
+        if status != Status::Ok {
             let error_message = format!("Command failed with status code: {:?}.", status);
-            Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)))
+            Err(InternalError::from(error_message))
         } else {
             Ok(())
         }
     }
 
-    pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: &Option<TimerModeBlocks>, actuator_mode_blocks: &Option<ActuatorModeBlocks>, op_mode_block: &Option<OpModeBlock>)  -> Result<(), Box<dyn std::error::Error>> {
+    pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: &Option<TimerModeBlocks>, actuator_mode_blocks: &Option<ActuatorModeBlocks>, op_mode_block: &Option<OpModeBlock>)  -> Result<()> {
         log::trace!("Requesting write to actuators' configuration ...");
 
         if uid.len() != 8 {
-            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, format!("Expected UID, which is a serial number of 8 bytes, but found {} bytes", uid.len()))));
+            return Err(InternalError::from(format!("Expected UID, which is a serial number of 8 bytes, but found {} bytes", uid.len())));
         }
 
         // Construct the feig command
@@ -566,69 +485,4 @@ impl<'a> UsbConnection<'a> {
         Ok(())
     }
 
-    fn send_command(self: &mut Self, serial_message: serial::advanced_protocol::HostToReader) -> Result<serial::advanced_protocol::ReaderToHost, Box<dyn std::error::Error>> {
-        // Marshal the serial command
-        let mut serial_message = serial_message;
-        let msg = serial_message.serialize();
-
-        let mut attempts = 0;
-        loop {
-            // Documented not less than 5 milliseconds between messages
-            std::thread::sleep(std::time::Duration::from_millis(6));
-
-            // Send the command to the Feig reader
-            match self.device_handle.write_bulk(2, msg.as_slice(), std::time::Duration::from_millis(50)) {
-                Ok(bytes_written) => {
-                    log::debug!("Sent Serial Command with {} bytes: {}", bytes_written, hex::encode(&msg));
-                },
-                Err(err) => {
-                    log::error!("Failed Serial Command Send: {}", err.to_string());
-                    return Err(Box::new(err));
-                }
-            }
-
-            // Read the response to the command
-            attempts += 1;
-            let response_message_size ;
-            match self.device_handle.read_bulk(129, self.response_message_buffer.as_mut_slice(), std::time::Duration::from_millis(5000)) {
-                Ok(bytes_read) => {
-                    log::debug!("Received Response to Serial Command with {} bytes: {}", bytes_read, hex::encode(&self.response_message_buffer[..bytes_read]));
-                    response_message_size = bytes_read;
-                },
-                Err(err) => {
-                    log::error!("Failed Serial Command Read: {}", err.to_string());
-                    continue
-                }
-            }
-
-            // Interpret the response
-            let response = serial::advanced_protocol::ReaderToHost::deserialize(&self.response_message_buffer[..response_message_size])?;
-            log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);
-
-
-            // Check for errors
-            let status  = obid::Status::from(response.status);
-            if status == obid::Status::RFWarning {
-                /*
-                 * A monitor is continusously checking the RF hardware and
-                 * if an error occurs the Reader answers every command with
-                 * the error code 0x84
-                 */
-                 let error_message = String::from("Generic Antenna Error: RF hardware monitor error status code 0x84");
-                 log::error!("{}", error_message);
-                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
-            } else if serial_message.device_required && status == obid::Status::NoTransponder {
-                log::error!("No devices found on attempt {} of {}", attempts, self.state.max_attempts);
-                if attempts >= self.state.max_attempts {
-                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Failed to communicate with device in antenna")));
-                } else {
-                    std::thread::sleep(std::time::Duration::from_millis(8 * attempts as u64));
-                    continue;
-                }
-            }
-
-            // All done
-            return Ok(response);
-        }
-    }
 }

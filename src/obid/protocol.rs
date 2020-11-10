@@ -101,7 +101,7 @@ pub mod advanced_protocol {
             // Reserve a vector of exactly the correct size
             self.alength = 1 + 2 + 1 + 1 + (self.data.len() as u16) + 2;
             let mut msg = vec![0u8; self.alength as usize];
-    
+
             // Encode the values up to crc16
             msg[0] = 0x02; // STX
             BigEndian::write_u16(&mut msg[1..=2], self.alength); // ALENGTH
@@ -110,16 +110,16 @@ pub mod advanced_protocol {
             if self.data.len() > 0 {
                 msg[5..(5 + self.data.len())].clone_from_slice(self.data.as_slice()); // DATA
             }
-    
+
             // Compute and encode crc16
             let n_2 = (self.alength - 2) as usize;
             self.crc16 = calc_crc16(&msg[..n_2]);
             LittleEndian::write_u16(&mut msg[n_2..], self.crc16);
-    
+
             log::trace!("Serialized Message: {:#X?}", msg);
             msg
         }
-    
+
         fn deserialize(self: &Self, data: &[u8]) -> Result<Box<dyn ObidSerialReceivable>, Box<dyn std::error::Error>> where Self: Sized{
             Ok(Box::new(ReaderToHost::deserialize(data)?))
         }
@@ -129,19 +129,19 @@ pub mod advanced_protocol {
             if data.len() < 7 {
                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Invalid (short) length for HostToReader message")));
             }
-    
+
             let n_2 = data.len() - 2;
             let crc16 = LittleEndian::read_u16(&data[n_2..]);
             if calc_crc16(&data[..n_2]) != crc16 {
                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "Invalid CRC16 for HostToReader message")));
             }
-    
+
             let alength = BigEndian::read_u16(&data[1..=2]);
             let com_adr = data[3];
             let control_byte = data[4];
-            let data = &data[5..n_2]; 
-    
-    
+            let data = &data[5..n_2];
+
+
             Ok(Self::new(
                 alength,
                 com_adr,
@@ -194,7 +194,7 @@ pub mod advanced_protocol {
             // Reserve a vector of exactly the correct size
             self.alength = 1 + 2 + 1 + 1 + 1 + (self.data.len() as u16) + 2;
             let mut msg = vec![0u8; self.alength as usize];
-    
+
             // Encode the values up to crc16
             msg[0] = 0x02; // STX
             BigEndian::write_u16(&mut msg[1..=2], self.alength); // ALENGTH
@@ -204,15 +204,15 @@ pub mod advanced_protocol {
             if self.data.len() > 0 {
                 msg[6..(6 + self.data.len())].clone_from_slice(self.data.as_slice()); // DATA
             }
-    
+
             // Compute and encode crc16
             let n_2 = (self.alength - 2) as usize;
             self.crc16 = calc_crc16(&msg[..n_2]);
             LittleEndian::write_u16(&mut msg[n_2..], self.crc16);
-    
+
             msg
         }
-    
+
         fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>>
         where Self: Sized {
             if data.len() < 8 {
@@ -220,7 +220,7 @@ pub mod advanced_protocol {
                 log::error!("Failed deserializing Obid message: {}", error_message);
                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
             }
-    
+
             let n_2 = data.len() - 2;
             let crc16 = LittleEndian::read_u16(&data[n_2..]);
             if calc_crc16(&data[..n_2]) != crc16 {
@@ -228,14 +228,14 @@ pub mod advanced_protocol {
                 log::error!("Failed deserializing Obid message: {}", error_message);
                 return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, error_message)));
             }
-    
+
             let alength = BigEndian::read_u16(&data[1..=2]);
             let com_adr = data[3];
             let control_byte = data[4];
             let status = data[5];
-            let data = &data[6..n_2]; 
-    
-    
+            let data = &data[6..n_2];
+
+
             Ok(Self::new(
                 alength,
                 com_adr,
