@@ -1,5 +1,5 @@
-mod protocol;
+mod serial;
 mod status;
 
-pub use protocol::*;
-pub use status::*;
+pub use self::serial::*;
+pub use self::status::*;

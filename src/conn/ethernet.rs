@@ -6,11 +6,12 @@ use std::{sync::mpsc, thread, time::Duration, io::prelude::*};
 
 
 
-/*Notes on Ethernet connection: 
+/*Notes on Ethernet connection:
     Fieg Reader IP: 192.168.10.10, netmask: 255.255.0.0
-    Need to match netmask when setting ip for linked computer (as long as ip address matches reader ip where subnet mask is 255 it should connect.Ex:192.168.1.1 since reader ip is 192.168.10.10 and mask is 255.255.0.0). 
-        Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 via direct link with ethernet cable.
-        Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 with reader and computer connected to seperate ethernet jacks in wall of bench.
+    Need to match netmask when setting ip for linked computer (as long as ip address matches reader ip where subnet mask is 255 it should connect.
+        Ex:192.168.1.1 since reader ip is 192.168.10.10 and mask is 255.255.0.0). 
+            Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 via direct link with ethernet cable.
+            Connection succeed with IP set to 192.168.10.1 and netmask 255.255.0.0 with reader and computer connected to seperate ethernet jacks in wall of bench.
 */
 
 
@@ -108,11 +109,10 @@ impl EthernetConnection {
                 return Err(InternalError::from("Could not connect over ethernet"))
             }
         }
-        
     }
 }
 
-pub struct EthernetContext<'a> { 
+pub struct EthernetContext<'a> {
     pub addr: &'a str,
 }
 
@@ -123,17 +123,15 @@ impl<'a> EthernetContext<'a> {
 }
 
 impl<'a> Context<'a> for EthernetContext<'a> {
-    type Conn = EthernetConnection;
-
-    fn connection(self: &'a Self) -> Result<EthernetConnection> {
-        Ok(EthernetConnection::new(self.addr)?)
+    fn connection(self: &'a Self) -> Result<Box<dyn Connection<'a> + 'a>> {
+        Ok(Box::new(EthernetConnection::new(self.addr)?))
     }
 }
 
-
+#[cfg(feature = "ethernet")]
 #[test]
 fn check_ethernet_connection() -> Result<()> {
-    let _ = simple_logger::init_with_level(log::Level::Debug);
+    let _ = simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Debug).init();
     _panic_after(Duration::from_millis(5000), move || -> (){
         let work = move || -> Result<()>{
             let context = Box::new(EthernetContext::new("192.168.10.10:10001")?);

@@ -24,10 +24,8 @@ impl MockConnection {
 pub struct MockContext { }
 
 impl<'a> Context<'a> for MockContext {
-    type Conn = MockConnection;
-
-    fn connection(self: &'a Self) -> Result<MockConnection> {
-        Ok(MockConnection::new())
+    fn connection(self: &'a Self) -> Result<Box<dyn Connection<'a> + 'a>> {
+        Ok(Box::new(MockConnection::new()))
     }
 }
 

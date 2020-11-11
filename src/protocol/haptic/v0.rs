@@ -1,9 +1,9 @@
-#![allow(dead_code)]
-
-use serde::{Serialize, Deserialize};
-use crate::obid::*;
-use crate::conn::{common::Connection};
+use crate::conn::common::{Connection};
 use crate::error::*;
+use crate::obid::*;
+use crate::protocol::common::*;
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct ObidTransponder {
@@ -67,11 +67,11 @@ pub struct ActuatorsCommand {
     pub use_cache: Option<bool>,
 }
 
-pub struct FabricState {
+pub struct V0FabricState {
     pub state: ActuatorsCommand,
 }
 
-impl FabricState {
+impl V0FabricState {
     pub fn new(fabric_name: &str) -> Self {
         Self {
             state: ActuatorsCommand {
@@ -149,41 +149,55 @@ impl FabricState {
     }
 }
 
-pub struct Fabric {
+pub struct V0Fabric {
     // A set of VR Actuator Blocks that are to be considered 1 unit
     pub name: String,
     pub transponders: smallvec::SmallVec<[ObidTransponder; 2]>,
-    pub state: FabricState,
 }
 
-impl std::fmt::Debug for Fabric {
+impl std::fmt::Debug for V0Fabric {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Fabric(name: '{}')", self.name)
     }
 }
 
-impl Fabric {//switch passed arg to protocol?
-    pub fn new(protocol: &mut HapticProtocol, name: &str) -> Result<Fabric> {
-        let mut fabric = Fabric {
+impl V0Fabric {//switch passed arg to protocol?
+    pub fn new(name: &str, transponders: smallvec::SmallVec<[ObidTransponder; 2]>) -> V0Fabric {
+        V0Fabric {
             name: String::from(name),
-            transponders: smallvec::smallvec![],
-            state: FabricState::new(name),
-        };
+            transponders: transponders,
+        }
+    }
+}
 
-        fabric.transponders = protocol.get_inventory(true)?;
+impl Fabric for V0Fabric {
+    fn name(self: &Self) -> String {
+        self.name.clone()
+    }
 
-        Ok(fabric)
+    fn identifier(self: &Self) -> Result<std::vec::Vec<u8>> {
+        match self.transponders.len() {
+            1 => {
+                return Ok(self.transponders[0].uid.as_slice().into());
+            },
+            _ => return Err(InternalError::from(format!("Cannot produce identifier with transponders: {:?}", self.transponders)))
+        }
     }
 }
 
 
-pub struct HapticProtocol<'a> {
+pub struct HapticV0Protocol<'a> {
     conn: Box<dyn Connection<'a> + 'a >,
+    fabrics: HashMap<String, Box<dyn Fabric>>,
+    states: HashMap<String, V0FabricState>,
 }
-impl<'a> HapticProtocol<'a> {
-    pub fn new(conn: Box<dyn Connection<'a> + 'a>) -> HapticProtocol<'a> {
-        HapticProtocol {
-            conn,
+
+impl<'a> HapticV0Protocol<'a> {
+    pub fn new(connection: Box<dyn Connection<'a> + 'a>) -> HapticV0Protocol<'a> {
+        HapticV0Protocol {
+            conn: connection,
+            fabrics: HashMap::new(),
+            states: HashMap::new(),
         }
     }
 
@@ -319,6 +333,63 @@ impl<'a> HapticProtocol<'a> {
         } else {
             Ok(())
         }
+    }
+
+    fn handle_actuators_command(self: &mut Self, fabric_name: &String, timer_mode_blocks: &Option<TimerModeBlocks>, actuator_mode_blocks: &Option<ActuatorModeBlocks>, op_mode_block: &Option<OpModeBlock>, use_cache: &Option<bool>) -> Result<()> {
+        let fabric = match self.fabrics.get_mut(fabric_name) {
+            Some(fabric) => {
+                log::trace!("Found transponder for actuator command: {:?}", fabric.identifier());
+                fabric
+            },
+            None => {
+                let message = format!("No existing fabric to write actuator command: {:?}", self.fabrics);
+                log::error!("{}", message);
+                return Err(InternalError::from(message.as_str()));
+            }
+        };
+        let state = self.states.get(fabric_name).ok_or(InternalError::from(format!("Missing fabric state for {}", fabric_name)))?;
+
+
+        let fabric_id = fabric.identifier()?;
+        let mut actuators_command = ActuatorsCommand {
+            fabric_name: fabric_name.clone(),
+            timer_mode_blocks: timer_mode_blocks.clone(),
+            actuator_mode_blocks: actuator_mode_blocks.clone(),
+            op_mode_block: op_mode_block.clone(),
+            use_cache: use_cache.clone(),
+        };
+
+        let actuators_command = match use_cache {
+            Some(flag)  => {
+                if *flag {
+                if state.state.use_cache.unwrap() {
+                    actuators_command = state.diff(actuators_command);
+                        log::debug!("Writing using cached diff: {:#?}", &actuators_command);
+                    } else {
+                        log::debug!("Skipping cached diff to warm cache");
+                    }
+                } else {
+                    log::debug!("Command electing to bypass cache");
+                }
+                actuators_command
+            },
+            _ => {
+                if state.state.use_cache.unwrap() {
+                    actuators_command = state.diff(actuators_command);
+                    log::debug!("Writing using cached diff: {:#?}", &actuators_command);
+                } else {
+                    log::debug!("Skipping cached diff to warm cache");
+                }
+                actuators_command
+            }
+        };
+
+        let result = self.actuators_command(fabric_id.as_slice(), &actuators_command.timer_mode_blocks, &actuators_command.actuator_mode_blocks, &actuators_command.op_mode_block);
+        if result.is_ok() {
+            let state = self.states.get_mut(fabric_name).ok_or(InternalError::from("Missing fabric state"))?;
+            state.apply(actuators_command);
+        }
+        result
     }
 
     pub fn actuators_command(self: &mut Self, uid: &[u8], timer_mode_blocks: &Option<TimerModeBlocks>, actuator_mode_blocks: &Option<ActuatorModeBlocks>, op_mode_block: &Option<OpModeBlock>)  -> Result<()> {
@@ -484,5 +555,65 @@ impl<'a> HapticProtocol<'a> {
 
         Ok(())
     }
+}
 
+
+impl<'a> Protocol<'a> for HapticV0Protocol<'a> {
+    fn handle_message(self: &mut Self, message: &CommandMessage) -> Result<()> {
+        match message {
+            CommandMessage::AddFabric { fabric_name } => {
+                let uid = match self.get_inventory(true) {
+                    Ok(uid) => uid,
+                    Err(err) => return Err(err)
+                };
+                let fabric: Box<dyn Fabric> = Box::new(V0Fabric::new(fabric_name.as_str(), uid));
+                self.fabrics.insert(fabric_name.clone(), fabric);
+                self.states.insert(fabric_name.clone(), V0FabricState::new(fabric_name.as_str()));
+                log::info!("Added new fabric to command for AddFabric command");
+                log::trace!("Active Fabrics: {:#?}", self.fabrics);
+                Ok(())
+            },
+            CommandMessage::RemoveFabric { fabric_name } => {
+                match self.fabrics.remove(fabric_name) {
+                    Some(fabric) => {
+                        log::info!("Removed existing fabric to command for AddFabric command");
+                        log::trace!("Active Fabrics:  {:#?}", self.fabrics);
+                        log::trace!("Removed Fabric:  {:#?}", fabric);
+                        Ok(())
+                    },
+                    None => {
+                        let message = format!("No existing fabric to remove for RemoveFabric command");
+                        log::error!("{}", message.as_str());
+                        Err(InternalError::from(message.as_str()))
+                    }
+                }
+            },
+            CommandMessage::SetRadioFreqPower { power_level } => {
+                log::debug!("Received SetRadioFreqPower command for power_level {:?}.", power_level);
+                match power_level {
+                    pl if *pl == 0 || (*pl >= 2 && *pl <= 12) => {
+                        self.set_radio_freq_power(*pl)
+                    },
+                    _ => {
+                        let message = format!("Value for power level ({}) is outside acceptable range Low Power (0) or [2,12].", power_level);
+                        log::error!("{}", message.as_str());
+                        Err(InternalError::from(message.as_str()))
+                    }
+                }
+            },
+            CommandMessage::CustomCommand { control_byte, data, device_required } => {
+                log::debug!("Received Custom command with control_byte {} and data {}", hex::encode(vec![control_byte.clone()]), hex::encode(data.as_bytes()));
+                let decoded_data = hex::decode(&data)?;
+                self.custom_command(control_byte.clone(), decoded_data.as_slice(), device_required.clone())
+            },
+            CommandMessage::ActuatorsCommand { fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block, use_cache } => {
+                log::debug!("Received ActuatorsCommand: {:#?} {:#?} {:#?} {:#?}", fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block);
+                self.handle_actuators_command(fabric_name, timer_mode_blocks, actuator_mode_blocks, op_mode_block, use_cache)
+            },
+            _ => {
+                log::debug!("Haptic V0 ignoring: {:?}", message);
+                Ok(())
+            }
+        }
+    }
 }

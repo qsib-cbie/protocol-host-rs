@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'vr_actuators_cli'",
+            "name": "Debug executable 'protocol_host_rs'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=vr_actuators_cli",
-                    "--package=vr_actuators_cli"
+                    "--bin=protocol_host_rs",
+                    "--package=protocol_host_rs"
                 ],
                 "filter": {
-                    "name": "vr_actuators_cli",
+                    "name": "protocol_host_rs",
                     "kind": "bin"
                 }
             },
@@ -28,16 +28,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'vr_actuators_cli'",
+            "name": "Debug unit tests in executable 'protocol_host_rs'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=vr_actuators_cli",
-                    "--package=vr_actuators_cli"
+                    "--bin=protocol_host_rs",
+                    "--package=protocol_host_rs"
                 ],
                 "filter": {
-                    "name": "vr_actuators_cli",
+                    "name": "protocol_host_rs",
                     "kind": "bin"
                 }
             },

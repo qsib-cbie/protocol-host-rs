@@ -1,4 +1,5 @@
 use crate::network::common::*;
+use crate::protocol::common::CommandMessage;
 
 pub struct Client {
     net_ctx: NetworkContext

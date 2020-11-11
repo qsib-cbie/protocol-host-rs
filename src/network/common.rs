@@ -1,7 +1,4 @@
 
-use crate::vrp;
-
-use serde::{Serialize, Deserialize};
 
 #[allow(dead_code)]
 pub struct NetworkContext {
@@ -70,19 +67,3 @@ impl NetworkContext {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub enum CommandMessage {
-    Failure { message: String },
-    Success { },
-
-    Stop { },
-
-    SystemReset { },
-    SetRadioFreqPower { power_level: u8 },
-    CustomCommand { control_byte: u8, data: String, device_required: bool },
-
-    AddFabric { fabric_name: String },
-    RemoveFabric { fabric_name: String },
-    ActuatorsCommand { fabric_name: String, timer_mode_blocks: Option<vrp::vrp::TimerModeBlocks>, actuator_mode_blocks: Option<vrp::vrp::ActuatorModeBlocks>, op_mode_block: Option<vrp::vrp::OpModeBlock>, use_cache: Option<bool>},
-
-}

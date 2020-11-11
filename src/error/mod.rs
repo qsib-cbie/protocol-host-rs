@@ -13,6 +13,7 @@ pub enum InternalError {
     ParseInt(ParseIntError),
     ParseFloat(ParseFloatError),
     SerdeError(serde_json::error::Error),
+    #[cfg(feature = "usb")]
     UsbError(libusb::Error),
     ZmqError(zmq::Error),
     HexError(hex::FromHexError),
@@ -47,6 +48,7 @@ impl fmt::Display for InternalError {
                 log::error!("Encountered serde error: {}", e);
                 e.fmt(f)
             },
+            #[cfg(feature = "usb")]
             InternalError::UsbError(ref e) => {
                 log::error!("Encountered usb error: {}", e);
                 e.fmt(f)
@@ -111,6 +113,7 @@ impl From<serde_json::error::Error> for InternalError {
     }
 }
 
+#[cfg(feature = "usb")]
 impl From<libusb::Error> for InternalError {
     fn from(err: libusb::Error) -> InternalError {
         InternalError::UsbError(err)
