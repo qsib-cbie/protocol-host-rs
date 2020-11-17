@@ -36,7 +36,7 @@ impl<'a> Connection<'a> for EthernetConnection {
                     return Err(InternalError::from(err));
                 }
             }
-        attempts += 1;
+            attempts += 1;
             let response_message_size ;
             match self.stream.read(self.response_message_buffer.as_mut_slice()) {
                 Ok(bytes_read) => {
@@ -48,7 +48,8 @@ impl<'a> Connection<'a> for EthernetConnection {
                     continue
                 }
             }
-
+            log::debug!("Sleep for 50ms");
+            std::thread::sleep(std::time::Duration::from_millis(50));
             // Interpret the response
             let response = advanced_protocol::ReaderToHost::deserialize(&self.response_message_buffer[..response_message_size])?;
             log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);
@@ -94,8 +95,8 @@ impl EthernetConnection {
                             hf_mod: None,
                             lf_mod: None,
 
-                            op_mode: None,
-                            act_mode: None,
+                            command: None,
+                            cmd_op: None,
                             act_block_count: None,
 
                             max_attempts: 5
