@@ -407,15 +407,22 @@ impl<'a> HapticV0Protocol<'a> {
         let control_byte = 0xB0; // Control Byte for manipulating transponder
         let command_id = 0x24;   // Command Id for Control Byte to write blocks to transponder's RF blocks
         let mode = 0x01; // addressed
+        let db_n = 0x01;
+        let db_size = 0x04;
+        let addr = 0x00;
         
-        let mut data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7]];
+        let mut data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size];
+        let header_len = data.len() as u8;
         let mut num_bytes = 3;
         let mut cmd_op = 1;
+        let mut act_cnt8 = 0;
         let mut is_actuators = false;
+        let command;
         if op_mode_block.is_some(){
             let bl = op_mode_block.as_ref().unwrap();
-            // log::debug!("Num act blks: {:#?}, cmd_op: {:#?}, command: {:#?} ",bl.act_cnt8,bl.cmd_op,bl.command);
-            if bl.command != 0 {
+            log::debug!("Num act blks: {:#?}, cmd_op: {:#?}, command: {:#?} ",bl.act_cnt8,bl.cmd_op,bl.command);
+            command = bl.command;
+            if command != 0 {
                 //Not all off command
                 if actuator_mode_blocks.is_some() {
                     is_actuators = true;
@@ -446,16 +453,22 @@ impl<'a> HapticV0Protocol<'a> {
                         data.push(blk);
                     }
                 }
-                let op_mode = cmd_op << 5 | bl.act_cnt8;
-                data.insert(10, op_mode);
-                num_bytes = (data.len() as u8) - 9;
-                data.insert(10, num_bytes);
+                }
+                data.push(command);
+                let op_mode = cmd_op << 5 | act_cnt8;
+                data.push(op_mode);
+                num_bytes = (data.len() as u8) - (header_len-1); //minus 1 so num_bytes byte is counted
+                data.push(num_bytes);
+                data[11] = (((data.len() as f32 - header_len as f32)/4f32).ceil()) as u8; //calcuate number of memeory blocks to write to
             } else {
                 //all off
-                let op_mode = bl.act_cnt8;
-                data.push(num_bytes); //num_bytes
+                act_cnt8 = bl.act_cnt8;
+                let op_mode = cmd_op << 5 | act_cnt8;
+                // LSB first
+                data.push(0x00); //first byte is empty when cmd_op is 1
+                data.push(command);
                 data.push(op_mode);
-                data.push(bl.command);
+                data.push(num_bytes); //num_bytes
             }
         }   
         match self.custom_command(control_byte, data.as_slice(), true) {
