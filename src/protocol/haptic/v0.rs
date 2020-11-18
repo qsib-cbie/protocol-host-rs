@@ -425,34 +425,40 @@ impl<'a> HapticV0Protocol<'a> {
             if command != 0 {
                 //Not all off command
                 if actuator_mode_blocks.is_some() {
-                    is_actuators = true;
                     let mut last_int = 0;
                     let bl = actuator_mode_blocks.as_ref().unwrap();
-                    let blks = vec![bl.block0_31.as_ref().unwrap().b0, bl.block0_31.as_ref().unwrap().b1, bl.block0_31.as_ref().unwrap().b2, bl.block0_31.as_ref().unwrap().b3,
-                                            bl.block32_63.as_ref().unwrap().b0,bl.block32_63.as_ref().unwrap().b1,bl.block32_63.as_ref().unwrap().b2,bl.block32_63.as_ref().unwrap().b3,
-                                            bl.block64_95.as_ref().unwrap().b0,bl.block64_95.as_ref().unwrap().b1,bl.block64_95.as_ref().unwrap().b2,bl.block64_95.as_ref().unwrap().b3,
-                                            bl.block96_127.as_ref().unwrap().b0,bl.block96_127.as_ref().unwrap().b1,bl.block96_127.as_ref().unwrap().b2,bl.block96_127.as_ref().unwrap().b3];
-                    for blk in blks.into_iter() {
-                        data.push(blk);
-                        if blk != 0 { last_int = data.len(); }
+                    let mut blks = vec![];
+                    if bl.block0_31.is_some(){ blks.extend([bl.block0_31.as_ref().unwrap().b0, bl.block0_31.as_ref().unwrap().b1, bl.block0_31.as_ref().unwrap().b2, bl.block0_31.as_ref().unwrap().b3].iter().copied());}
+                    if bl.block32_63.is_some(){ blks.extend([bl.block32_63.as_ref().unwrap().b3,bl.block32_63.as_ref().unwrap().b2,bl.block32_63.as_ref().unwrap().b1,bl.block32_63.as_ref().unwrap().b0].iter().copied());}
+                    if bl.block64_95.is_some(){ blks.extend([bl.block64_95.as_ref().unwrap().b3,bl.block64_95.as_ref().unwrap().b2,bl.block64_95.as_ref().unwrap().b1,bl.block64_95.as_ref().unwrap().b0].iter().copied());}
+                    if bl.block96_127.is_some(){ blks.extend([bl.block96_127.as_ref().unwrap().b3,bl.block96_127.as_ref().unwrap().b2,bl.block96_127.as_ref().unwrap().b1,bl.block96_127.as_ref().unwrap().b0].iter().copied());}
+                    if blks.len() != 0 {
+                        is_actuators = true;
+                        for blk in blks.into_iter() {
+                            data.push(blk);
+                            if blk != 0 { last_int = data.len(); }
+                        }
+                        data.truncate(last_int);
+                        act_cnt8 = (data.len() as u8) - header_len;
+                        cmd_op = 2; //Command without timing config. Overwritten if timing is added.
                     }
-                    data.truncate(last_int);
-                    cmd_op = 2; //Command without timing config. Overwritten if timing is added.
                 }
                 if timer_mode_blocks.is_some() {
-                    if is_actuators { 
-                        cmd_op = 3; //Actuator command with timing config
-                    } else {
-                        cmd_op = 0; //Only update timing
-                    }
                     let bl = timer_mode_blocks.as_ref().unwrap();
-                    let blks = vec![bl.single_pulse_block.as_ref().unwrap().b0,bl.single_pulse_block.as_ref().unwrap().b1,bl.single_pulse_block.as_ref().unwrap().b2,
-                                            bl.hf_block.as_ref().unwrap().b0,bl.hf_block.as_ref().unwrap().b1,bl.hf_block.as_ref().unwrap().b2,
-                                            bl.lf_block.as_ref().unwrap().b0,bl.lf_block.as_ref().unwrap().b1,bl.lf_block.as_ref().unwrap().b2];
-                    for blk in blks.into_iter() {
-                        data.push(blk);
+                    let mut blks = vec![];
+                    if bl.single_pulse_block.is_some() {blks.extend([bl.single_pulse_block.as_ref().unwrap().b0,bl.single_pulse_block.as_ref().unwrap().b1,bl.single_pulse_block.as_ref().unwrap().b2].iter().copied());}
+                    if bl.hf_block.is_some() {blks.extend([bl.hf_block.as_ref().unwrap().b0,bl.hf_block.as_ref().unwrap().b1,bl.hf_block.as_ref().unwrap().b2].iter().copied());}
+                    if bl.lf_block.is_some() {blks.extend([bl.lf_block.as_ref().unwrap().b0,bl.lf_block.as_ref().unwrap().b1,bl.lf_block.as_ref().unwrap().b2].iter().copied());}
+                    if blks.len() != 0 {
+                        if is_actuators { 
+                            cmd_op = 3; //Actuator command with timing config
+                        } else {
+                            cmd_op = 0; //Only update timing
+                        }
+                        for blk in blks.into_iter() {
+                            data.push(blk);
+                        }
                     }
-                }
                 }
                 data.push(command);
                 let op_mode = cmd_op << 5 | act_cnt8;
