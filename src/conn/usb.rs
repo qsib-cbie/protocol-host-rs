@@ -124,8 +124,8 @@ impl<'a> UsbConnection<'a> {
                             hf_mod: None,
                             lf_mod: None,
 
-                            op_mode: None,
-                            act_mode: None,
+                            command: None,
+                            cmd_op: None,
                             act_block_count: None,
 
                             max_attempts: 5
