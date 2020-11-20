@@ -527,6 +527,9 @@ impl<'a> HapticV0Protocol<'a> {
 impl<'a> Protocol<'a> for HapticV0Protocol<'a> {
     fn handle_message(self: &mut Self, message: &CommandMessage) -> Result<()> {
         match message {
+            CommandMessage::RfFieldState { state} => {
+                self.custom_command(0x6A, vec![*state].as_slice(), false)
+            }
             CommandMessage::AddFabric { fabric_name } => {
                 let uid = match self.get_inventory(true) {
                     Ok(uid) => uid,
