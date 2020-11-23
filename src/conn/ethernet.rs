@@ -48,8 +48,6 @@ impl<'a> Connection<'a> for EthernetConnection {
                     continue
                 }
             }
-            log::debug!("Sleep for 50ms");
-            std::thread::sleep(std::time::Duration::from_millis(50));
             // Interpret the response
             let response = advanced_protocol::ReaderToHost::deserialize(&self.response_message_buffer[..response_message_size])?;
             log::trace!("Interpretting response for attempt {}: {:#?}", attempts, response);

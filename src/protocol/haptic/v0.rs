@@ -326,8 +326,6 @@ impl<'a> HapticV0Protocol<'a> {
 
         let request = advanced_protocol::HostToReader::new(0, 0xFF, control_byte, data, 0, device_required);
         let response = self.conn.send_command(request)?;
-        // log::debug!("Sleep for 30ms");
-        // std::thread::sleep(std::time::Duration::from_millis(30));
 
         let status = Status::from(response.status);
         if status != Status::Ok {
@@ -409,11 +407,12 @@ impl<'a> HapticV0Protocol<'a> {
         let db_n = 0x01;
         let db_size = 0x04;
         let addr = 0x00;
+        let mut write_blocks = false;
         
         let mut data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr, db_n, db_size];
         let mut num_bytes = 3;
         let mut cmd_op;
-        let mut act_cnt8 = 0;
+        let mut act_cnt8 ;
         let mut is_actuators = false;
         let mut mem_blk1 = vec![0,0];
         let mut mem_blk2:Vec<u8> = vec![];
@@ -425,6 +424,7 @@ impl<'a> HapticV0Protocol<'a> {
             log::debug!("Num act blks: {:#?}, cmd_op: {:#?}, command: {:#?} ",bl.act_cnt8,bl.cmd_op,bl.command);
             command = bl.command;
             cmd_op = bl.cmd_op;
+            act_cnt8 = bl.act_cnt8;
             if command != 0 {
                 //Not all off command
                 if actuator_mode_blocks.is_some() && cmd_op != 0 {
@@ -439,6 +439,7 @@ impl<'a> HapticV0Protocol<'a> {
                     if bl.block96_127.is_some(){ blks.extend([bl.block96_127.as_ref().unwrap().b0, bl.block96_127.as_ref().unwrap().b1, bl.block96_127.as_ref().unwrap().b2, bl.block96_127.as_ref().unwrap().b3].iter().copied());}
                     if blks.len() != 0 {
                         is_actuators = true;
+                        write_blocks = true;
                         let mut last_int = 0;
                         let mut cnt = 0;
                         for blk in blks.iter_mut() { //find last relavant byte
@@ -450,7 +451,7 @@ impl<'a> HapticV0Protocol<'a> {
                             if mem_blk2.len() == 0 {mem_blk2.extend(chunk)}
                             else if mem_blk3.len() == 0 {mem_blk3.extend(chunk)}
                         }
-                        act_cnt8 = 1 + blks.len() as u8;
+                        act_cnt8 = 5;  //1 + blks.len() as u8;
                         cmd_op = 2; //Command without timing config. Overwritten if timing is added.
                     } else {
                         act_cnt8 = 0;
@@ -463,6 +464,7 @@ impl<'a> HapticV0Protocol<'a> {
                     if bl.hf_block.is_some() {blks.extend([bl.hf_block.as_ref().unwrap().b0,bl.hf_block.as_ref().unwrap().b1,bl.hf_block.as_ref().unwrap().b2].iter().copied());}
                     if bl.lf_block.is_some() {blks.extend([bl.lf_block.as_ref().unwrap().b0,bl.lf_block.as_ref().unwrap().b1,bl.lf_block.as_ref().unwrap().b2].iter().copied());}
                     if blks.len() != 0 {
+                        write_blocks = true;
                         if is_actuators { 
                             cmd_op = 3; //Actuator command with timing config
                             //Fill memory blocks with space
@@ -483,7 +485,7 @@ impl<'a> HapticV0Protocol<'a> {
                             }
                         }
                     }
-                }                        
+                }                       
                 while mem_blk2.len() > 0 && mem_blk2.len() < 4 { //Need to fill memory blocks if not full
                     mem_blk2.push(0);
                 }
@@ -509,6 +511,7 @@ impl<'a> HapticV0Protocol<'a> {
                 data.extend_from_slice(mem_blk3.as_slice());
             } else {
                 //all off
+                write_blocks = true;
                 act_cnt8 = bl.act_cnt8;
                 let op_mode = cmd_op << 5 | act_cnt8;
                 // LSB first
@@ -518,11 +521,13 @@ impl<'a> HapticV0Protocol<'a> {
                 data.push(num_bytes as u8); //num_bytes
             }    
         }   
-        match self.custom_command(control_byte, data.as_slice(), true) {
-            Ok(_) => { },
-            Err(err) => {
-                log::error!("Failed to write actuators command: {}", err);
-                return Err(err);
+        if write_blocks {
+            match self.custom_command(control_byte, data.as_slice(), true) {
+                Ok(_) => { },
+                Err(err) => {
+                    log::error!("Failed to write actuators command: {}", err);
+                    return Err(err);
+                }
             }
         }
         Ok(())        
