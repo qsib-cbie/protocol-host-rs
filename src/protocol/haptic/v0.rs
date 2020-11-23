@@ -467,10 +467,10 @@ impl<'a> HapticV0Protocol<'a> {
                         if is_actuators { 
                             cmd_op = 3; //Actuator command with timing config
                             //Fill memory blocks with space
-                            while mem_blk2.len() < 4 { 
+                            while mem_blk2.len() < 4 && blks.len() != 0 { 
                                 mem_blk2.push(blks.remove(0));
                             }
-                            while mem_blk3.len() < 4 {
+                            while mem_blk3.len() < 4 && blks.len() != 0 {
                                 mem_blk3.push(blks.remove(0));
                             }
                         } else { //Only setting timing blocks
@@ -485,7 +485,15 @@ impl<'a> HapticV0Protocol<'a> {
                         }
                     }
                 }                        
-                
+                while mem_blk2.len() > 0 && mem_blk2.len() < 4 { //Need to fill memory blocks if not full
+                    mem_blk2.push(0);
+                }
+                if mem_blk2.len() == 0 && is_actuators {
+                    mem_blk2 = vec![0,0,0,0];
+                }
+                while mem_blk3.len() > 0 && mem_blk3.len() < 4 {
+                    mem_blk3.push(0);
+                } 
                 let op_mode = cmd_op << 5 | act_cnt8;
                 mem_blk1[1] = op_mode;
 
@@ -494,7 +502,6 @@ impl<'a> HapticV0Protocol<'a> {
                 num_bytes = mem_blk1.len()+mem_blk2.len()+mem_blk3.len();
                 mem_blk1[0] = num_bytes as u8;
                 data[11] = ((num_bytes as f32/4f32).ceil()) as u8; //calcuate number of memeory blocks to write to
-                
                 mem_blk1.reverse();
                 mem_blk2.reverse();
                 mem_blk3.reverse();
