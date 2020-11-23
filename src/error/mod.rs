@@ -25,42 +25,38 @@ impl fmt::Display for InternalError {
             InternalError::Generic(ref e) => {
                 log::error!("Failed with error: {}", e);
                 e.fmt(f)
-            },
-            InternalError::IoError(ref e) => {
-                e.fmt(f)
-            },
-            InternalError::BoxError(ref e) => {
-                e.fmt(f)
-            },
+            }
+            InternalError::IoError(ref e) => e.fmt(f),
+            InternalError::BoxError(ref e) => e.fmt(f),
             InternalError::ParseUtf8(ref e) => {
                 log::error!("Failed to parse utf8 string");
                 e.fmt(f)
-            },
+            }
             InternalError::ParseFloat(ref e) => {
                 log::error!("Failed to parse input as floating point value");
                 e.fmt(f)
-            },
+            }
             InternalError::ParseInt(ref e) => {
                 log::error!("Failed to parse input as integer value");
                 e.fmt(f)
-            },
+            }
             InternalError::SerdeError(ref e) => {
                 log::error!("Encountered serde error: {}", e);
                 e.fmt(f)
-            },
+            }
             #[cfg(feature = "usb")]
             InternalError::UsbError(ref e) => {
                 log::error!("Encountered usb error: {}", e);
                 e.fmt(f)
-            },
+            }
             InternalError::ZmqError(ref e) => {
                 log::error!("Encountered zmq error: {}", e);
                 e.fmt(f)
-            },
+            }
             InternalError::HexError(ref e) => {
                 log::error!("Encountered hex error: {}", e);
                 e.fmt(f)
-            },
+            }
         }
     }
 }

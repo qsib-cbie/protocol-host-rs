@@ -1,14 +1,10 @@
-
 #[derive(Debug, PartialEq)]
 #[repr(u8)]
 pub enum Status {
-
     /// This enum represents an value that could not map to an Obid Status Code
     Invalid = 0xFF,
 
     // MARK: GENERAL
-
-
     /// Data / parameters have been read or stored without error
     /// Control command has been executed
     Ok = 0x00,
@@ -23,12 +19,7 @@ pub enum Status {
     /// ACC is initialized partly or completely with default values and Host Mode may be enabled
     InitializationWarning = 0xF2,
 
-
-
     // MARK: TRANSPONDER STATUS
-
-
-
     /// No Transponder is located within the detection range of the Reader.
     /// The Transponder in the detection range has been switched to mute.
     /// The communication between Reader and Transponder has been interfered and the Reader
@@ -54,12 +45,7 @@ pub enum Status {
     /// A special command is not applicable to the Transponder.
     WrongTransponderType = 0x05,
 
-
-
     // MARK: PARAMETER STATUS
-
-
-
     /// The EEPROM of the Reader is not able to be written on.
     /// Before writing onto the EEPROM a faulty checksum of parameters has been detected. Parameter-Range-Error:
     /// The value range of the parameters was exceeded.
@@ -92,12 +78,7 @@ pub enum Status {
     /// Mismatch between RFC Firmware and Hardware
     WrongFirmware = 0x18,
 
-
-
     // MARK: INTERFACE STATUS
-
-
-
     /// The reader does not support the selected function
     UnknownCommand = 0x80,
 
@@ -124,7 +105,6 @@ pub enum Status {
     /// The VALID-TIME1 hasn‟t elapsed for Transponders in the antenna field.
     NoValidData = 0x92,
 
-
     /// A data buffer overflow occurred.
     DataBufferOverflow = 0x93,
 
@@ -139,40 +119,39 @@ pub enum Status {
 impl From<u8> for Status {
     fn from(code: u8) -> Self {
         match code {
-            0x00 => { Status::Ok },
-            0x0F => { Status::Busy },
-            0xF1 => { Status::HardwareWarning },
-            0xF2 => { Status::InitializationWarning },
-            0x01 => { Status::NoTransponder },
-            0x02 => { Status::DataFalse },
-            0x03 => { Status::WriteError },
-            0x04 => { Status::AddressError },
-            0x05 => { Status::WrongTransponderType },
-            0x10 => { Status::EepromFailure },
-            0x11 => { Status::ParameterRangeError },
-            0x13 => { Status::LoginRequest },
-            0x14 => { Status::LoginError },
-            0x15 => { Status::ReadProtect },
-            0x16 => { Status::WriteProtect },
-            0x17 => { Status::FirmwareActivationRequired },
-            0x18 => { Status::WrongFirmware },
-            0x80 => { Status::UnknownCommand },
-            0x81 => { Status::LengthError },
-            0x82 => { Status::CommandNotAvailable },
-            0x83 => { Status::RFCommuncicationError },
-            0x84 => { Status::RFWarning },
-            0x92 => { Status::NoValidData },
-            0x93 => { Status::DataBufferOverflow },
-            0x94 => { Status::MoreData },
-            0x95 => { Status::TagError },
+            0x00 => Status::Ok,
+            0x0F => Status::Busy,
+            0xF1 => Status::HardwareWarning,
+            0xF2 => Status::InitializationWarning,
+            0x01 => Status::NoTransponder,
+            0x02 => Status::DataFalse,
+            0x03 => Status::WriteError,
+            0x04 => Status::AddressError,
+            0x05 => Status::WrongTransponderType,
+            0x10 => Status::EepromFailure,
+            0x11 => Status::ParameterRangeError,
+            0x13 => Status::LoginRequest,
+            0x14 => Status::LoginError,
+            0x15 => Status::ReadProtect,
+            0x16 => Status::WriteProtect,
+            0x17 => Status::FirmwareActivationRequired,
+            0x18 => Status::WrongFirmware,
+            0x80 => Status::UnknownCommand,
+            0x81 => Status::LengthError,
+            0x82 => Status::CommandNotAvailable,
+            0x83 => Status::RFCommuncicationError,
+            0x84 => Status::RFWarning,
+            0x92 => Status::NoValidData,
+            0x93 => Status::DataBufferOverflow,
+            0x94 => Status::MoreData,
+            0x95 => Status::TagError,
             _ => {
                 log::error!("Invalid code for Obid Status codes");
                 Status::Invalid
-            },
+            }
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
