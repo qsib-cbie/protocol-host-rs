@@ -122,7 +122,6 @@ impl V0FabricState {
     pub fn apply(self: &mut Self, new_state: ActuatorsCommand) {
         let diff = self.diff(new_state);
 
-        let new_actuator_blocks = &diff.actuator_mode_blocks.unwrap_or(self.state.actuator_mode_blocks.clone().unwrap());
         let curr_actuator_blocks = self.state.actuator_mode_blocks.as_ref().unwrap();
 
         let new_timer_blocks = &diff.timer_mode_blocks.unwrap_or(self.state.timer_mode_blocks.clone().unwrap());
@@ -133,10 +132,10 @@ impl V0FabricState {
             fabric_name: self.state.fabric_name.clone(),
             op_mode_block: diff.op_mode_block,
             actuator_mode_blocks: Some(ActuatorModeBlocks {
-                block0_31: if new_actuator_blocks.block0_31.is_some() { new_actuator_blocks.block0_31.clone() } else { curr_actuator_blocks.block0_31.clone() },
-                block32_63: if new_actuator_blocks.block32_63.is_some() { new_actuator_blocks.block32_63.clone() } else { curr_actuator_blocks.block32_63.clone() },
-                block64_95: if new_actuator_blocks.block64_95.is_some() { new_actuator_blocks.block64_95.clone() } else { curr_actuator_blocks.block64_95.clone() },
-                block96_127: if new_actuator_blocks.block96_127.is_some() { new_actuator_blocks.block96_127.clone() } else { curr_actuator_blocks.block96_127.clone() },
+                block0_31: curr_actuator_blocks.block0_31.clone(),
+                block32_63: curr_actuator_blocks.block32_63.clone(),
+                block64_95: curr_actuator_blocks.block64_95.clone(),
+                block96_127: curr_actuator_blocks.block96_127.clone(),
             }),
             timer_mode_blocks: Some(TimerModeBlocks {
                 single_pulse_block: if new_timer_blocks.single_pulse_block.is_some() { new_timer_blocks.single_pulse_block.clone() } else { curr_timer_blocks.single_pulse_block.clone() },
