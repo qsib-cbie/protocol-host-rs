@@ -1,5 +1,3 @@
-
-
 #[allow(dead_code)]
 pub struct NetworkContext {
     pub endpoint: String,
@@ -10,12 +8,14 @@ pub struct NetworkContext {
 }
 
 impl NetworkContext {
-
     pub fn get_endpoint(protocol: &str, hostname: &str, port: i16) -> String {
         String::from(format!("{}://{}:{}", protocol, hostname, port.to_string()))
     }
 
-    pub fn new(endpoint: String, socket_type_name: &str) -> Result<NetworkContext, Box<dyn std::error::Error>> {
+    pub fn new(
+        endpoint: String,
+        socket_type_name: &str,
+    ) -> Result<NetworkContext, Box<dyn std::error::Error>> {
         let ctx = Self::_new(endpoint, socket_type_name);
         match ctx {
             Ok(ctx) => Ok(ctx),
@@ -34,15 +34,13 @@ impl NetworkContext {
                 socket.connect(endpoint.as_str())?;
                 log::info!("Connected to {}", endpoint);
 
-
                 Ok(NetworkContext {
                     endpoint,
                     _ctx: ctx,
                     socket,
                     socket_type_name: String::from(socket_type_name),
-
                 })
-            },
+            }
             "REQ_DEALER" => {
                 let socket = ctx.socket(zmq::DEALER)?;
                 log::trace!("Created socket DEALER to act as REQ");
@@ -50,15 +48,13 @@ impl NetworkContext {
                 socket.connect(endpoint.as_str())?;
                 log::info!("Connected to {}", endpoint);
 
-
                 Ok(NetworkContext {
                     endpoint,
                     _ctx: ctx,
                     socket,
                     socket_type_name: String::from(socket_type_name),
-
                 })
-            },
+            }
             _ => {
                 log::error!("Unsupported socket type: {:#?}", socket_type_name);
                 Err(zmq::Error::EINVAL)
@@ -66,4 +62,3 @@ impl NetworkContext {
         }
     }
 }
-

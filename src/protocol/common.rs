@@ -1,4 +1,3 @@
-
 use crate::error::*;
 use crate::protocol::haptic;
 use core::fmt::Debug;
@@ -6,25 +5,39 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum CommandMessage {
-    Failure { message: String },
-    Success { },
+    Failure {
+        message: String,
+    },
+    Success {},
 
-    Stop { },
+    Stop {},
 
-    SystemReset { },
-    SetRadioFreqPower { power_level: u8 },
-    CustomCommand { control_byte: u8, data: String, device_required: bool },
+    SystemReset {},
+    SetRadioFreqPower {
+        power_level: u8,
+    },
+    CustomCommand {
+        control_byte: u8,
+        data: String,
+        device_required: bool,
+    },
 
-    RfFieldState {state: u8},
+    RfFieldState {
+        state: u8,
+    },
 
-    AddFabric { fabric_name: String },
-    RemoveFabric { fabric_name: String },
+    AddFabric {
+        fabric_name: String,
+    },
+    RemoveFabric {
+        fabric_name: String,
+    },
     ActuatorsCommand {
         fabric_name: String,
         timer_mode_blocks: Option<haptic::v0::TimerModeBlocks>,
         actuator_mode_blocks: Option<haptic::v0::ActuatorModeBlocks>,
         op_mode_block: Option<haptic::v0::OpModeBlock>,
-        use_cache: Option<bool>
+        use_cache: Option<bool>,
     },
 }
 
@@ -41,5 +54,4 @@ impl Debug for dyn Fabric {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Fabric({},{:?})", self.name(), self.identifier())
     }
-
 }
