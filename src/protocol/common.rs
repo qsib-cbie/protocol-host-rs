@@ -15,6 +15,8 @@ pub enum CommandMessage {
     SetRadioFreqPower { power_level: u8 },
     CustomCommand { control_byte: u8, data: String, device_required: bool },
 
+    RfFieldState {state: u8},
+
     AddFabric { fabric_name: String },
     RemoveFabric { fabric_name: String },
     ActuatorsCommand {

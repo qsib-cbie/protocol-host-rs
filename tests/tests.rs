@@ -73,9 +73,9 @@ fn e2e_pulsing_after_antenna_reset() -> Result<()> {
 fn e2e_pulsing() -> Result<()> {
     // Issues commands to enable all actuators in the single fabric of 36 in continuous 50 ms on 50 ms off
     let op_mode_block = protocol_host_lib::protocol::haptic::v0::OpModeBlock {
-        act_cnt32: 0x02, // ceil(36.0 / 32.0) = 2
-        act_mode: 0x00,
-        op_mode: 0x02,
+        act_cnt8: 0x02, // ceil(36.0 / 32.0) = 2
+        cmd_op: 0x00,
+        command: 0x02,
     };
     let op_mode_block = serde_json::to_string(&op_mode_block)?;
 
@@ -120,7 +120,6 @@ fn e2e_pulsing() -> Result<()> {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
-            b3: 0x00,
         }),
 
         /*
@@ -133,7 +132,6 @@ fn e2e_pulsing() -> Result<()> {
             b0: ((hf_duty_cycle & 0x00FF)) as u8,
             b1: ((hf_duty_cycle & 0xFF00) >> 8) as u8,
             b2: ((hf_period & 0x00FF)) as u8,
-            b3: ((hf_period & 0xFF00) >> 8) as u8,
         }),
 
         /*
@@ -146,7 +144,6 @@ fn e2e_pulsing() -> Result<()> {
             b0: 0xFF, // ((4000 & 0x00FF)) as u8,
             b1: 0xFF, // ((4000 & 0xFF00) >> 8) as u8,
             b2: 0xFF, // ((4000 & 0x00FF)) as u8,
-            b3: 0xFF, // ((4000 & 0xFF00) >> 8) as u8,
         })
     };
     let timer_mode_blocks= serde_json::to_string(&timer_mode_blocks)?;
@@ -167,9 +164,9 @@ fn e2e_pulsing() -> Result<()> {
 fn send_all_off() -> Result<()> {
     // Issues commands to enable all actuators in the single fabric of 36 in continuous 50 ms on 50 ms off
     let op_mode_block = protocol_host_lib::protocol::haptic::v0::OpModeBlock {
-        act_cnt32: 0x02, // ceil(36.0 / 32.0) = 2
-        act_mode: 0x00,
-        op_mode: 0x00,
+        act_cnt8: 0x02, // ceil(36.0 / 32.0) = 2
+        cmd_op: 0x00,
+        command: 0x00,
     };
     let op_mode_block = serde_json::to_string(&op_mode_block)?;
 
@@ -214,7 +211,6 @@ fn send_all_off() -> Result<()> {
             b0: 0x00,
             b1: 0x00,
             b2: 0x00,
-            b3: 0x00,
         }),
 
         /*
@@ -227,7 +223,6 @@ fn send_all_off() -> Result<()> {
             b0: ((hf_duty_cycle & 0x00FF)) as u8,
             b1: ((hf_duty_cycle & 0xFF00) >> 8) as u8,
             b2: ((hf_period & 0x00FF)) as u8,
-            b3: ((hf_period & 0xFF00) >> 8) as u8,
         }),
 
         /*
@@ -240,7 +235,6 @@ fn send_all_off() -> Result<()> {
             b0: 0xFF, // ((4000 & 0x00FF)) as u8,
             b1: 0xFF, // ((4000 & 0xFF00) >> 8) as u8,
             b2: 0xFF, // ((4000 & 0x00FF)) as u8,
-            b3: 0xFF, // ((4000 & 0xFF00) >> 8) as u8,
         })
     };
     let timer_mode_blocks= serde_json::to_string(&timer_mode_blocks)?;

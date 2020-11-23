@@ -25,7 +25,7 @@ pub struct Server<'a, 'b> {
 
 impl<'a, 'b> Server<'a, 'b> {
     pub fn new(ctx: &'a ServerContext, conn: Box<dyn Connection<'b> +'b>) -> Result<Server<'a, 'b>> {
-        if cfg![feature = "hatpic_v0"] {
+        if cfg![feature = "haptic_v0"] {
             log::info!("Creating HapticV0Protocol instance ...");
             Ok(Server {
                 ctx,

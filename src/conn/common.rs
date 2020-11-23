@@ -11,8 +11,8 @@ pub struct AntennaState {
     pub lf_mod: Option<i32>,
     pub act_block_count: Option<i32>,
 
-    pub op_mode: Option<String>,
-    pub act_mode: Option<String>,
+    pub command: Option<String>,
+    pub cmd_op: Option<String>,
 
     pub max_attempts: i32,
 }
