@@ -20,14 +20,14 @@ pub struct CustomCommand {
     pub device_required: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct OpModeBlock {
     pub act_cnt8: u8,
     pub cmd_op: u8,
     pub command: u8,
 }
 
-#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug, Default)]
 pub struct ActuatorModeBlock {
     pub b0: u8,
     pub b1: u8,
@@ -41,9 +41,13 @@ pub struct ActuatorModeBlocks {
     pub block32_63: Option<ActuatorModeBlock>,
     pub block64_95: Option<ActuatorModeBlock>,
     pub block96_127: Option<ActuatorModeBlock>,
+    pub block128_159: Option<ActuatorModeBlock>,
+    pub block160_191: Option<ActuatorModeBlock>,
+    pub block192_223: Option<ActuatorModeBlock>,
+    pub block224_255: Option<ActuatorModeBlock>,
 }
 
-#[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
+#[derive(PartialEq, Clone, Serialize, Deserialize, Debug, Default)]
 pub struct TimerModeBlock {
     pub t_pulse: u16,
     pub t_pause: u16,
@@ -70,45 +74,18 @@ impl V0FabricState {
         Self {
             state: ActuatorsCommand {
                 fabric_name: String::from(fabric_name),
-                op_mode_block: Some(OpModeBlock {
-                    act_cnt8: 0,
-                    cmd_op: 0,
-                    command: 0,
-                }),
+                op_mode_block: Some(Default::default()),
                 actuator_mode_blocks: Some(ActuatorModeBlocks {
-                    block0_31: Some(ActuatorModeBlock {
-                        b0: 0,
-                        b1: 0,
-                        b2: 0,
-                        b3: 0,
-                    }),
-                    block32_63: Some(ActuatorModeBlock {
-                        b0: 0,
-                        b1: 0,
-                        b2: 0,
-                        b3: 0,
-                    }),
-                    block64_95: Some(ActuatorModeBlock {
-                        b0: 0,
-                        b1: 0,
-                        b2: 0,
-                        b3: 0,
-                    }),
-                    block96_127: Some(ActuatorModeBlock {
-                        b0: 0,
-                        b1: 0,
-                        b2: 0,
-                        b3: 0,
-                    }),
+                    block0_31: Some(Default::default()),
+                    block32_63: Some(Default::default()),
+                    block64_95: Some(Default::default()),
+                    block96_127: Some(Default::default()),
+                    block128_159: Some(Default::default()),
+                    block160_191: Some(Default::default()),
+                    block192_223: Some(Default::default()),
+                    block224_255: Some(Default::default()),
                 }),
-                timer_mode_block: Some(TimerModeBlock {
-                    t_pulse: 0,
-                    t_pause: 0,
-                    ton_high: 0,
-                    tperiod_high: 0,
-                    ton_low: 0,
-                    tperiod_low: 0,
-                }),
+                timer_mode_block: Some(Default::default()),
                 use_cache: Some(false),
             },
         }
@@ -156,6 +133,34 @@ impl V0FabricState {
                 } else {
                     None
                 },
+                block128_159: if new_actuator_blocks.block128_159.is_some()
+                    && curr_actuator_blocks.block128_159 != new_actuator_blocks.block128_159
+                {
+                    new_actuator_blocks.block128_159.clone()
+                } else {
+                    None
+                },
+                block160_191: if new_actuator_blocks.block160_191.is_some()
+                    && curr_actuator_blocks.block160_191 != new_actuator_blocks.block160_191
+                {
+                    new_actuator_blocks.block160_191.clone()
+                } else {
+                    None
+                },
+                block192_223: if new_actuator_blocks.block192_223.is_some()
+                    && curr_actuator_blocks.block192_223 != new_actuator_blocks.block192_223
+                {
+                    new_actuator_blocks.block192_223.clone()
+                } else {
+                    None
+                },
+                block224_255: if new_actuator_blocks.block224_255.is_some()
+                    && curr_actuator_blocks.block224_255 != new_actuator_blocks.block224_255
+                {
+                    new_actuator_blocks.block224_255.clone()
+                } else {
+                    None
+                },
             }),
             timer_mode_block: if curr_timer_block != new_timer_block {
                 new_timer_block.clone()
@@ -180,6 +185,10 @@ impl V0FabricState {
                 block32_63: curr_actuator_blocks.block32_63.clone(),
                 block64_95: curr_actuator_blocks.block64_95.clone(),
                 block96_127: curr_actuator_blocks.block96_127.clone(),
+                block128_159: curr_actuator_blocks.block128_159.clone(),
+                block160_191: curr_actuator_blocks.block160_191.clone(),
+                block192_223: curr_actuator_blocks.block192_223.clone(),
+                block224_255: curr_actuator_blocks.block224_255.clone(),
             }),
             timer_mode_block: diff.timer_mode_block,
             use_cache: Some(true), // Use the cache once the cache starts applying on top of its own state
@@ -358,22 +367,6 @@ impl<'a> HapticV0Protocol<'a> {
             0,
             0, // CFG-Data :: CFG3 Byte 7,8,9,10,11,12 0x00
             0b1000_0001, // CFG-Data :: CFG3 Byte 13 FU_COM,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0, // IDK WHY THIS IS REQUIRED
         ];
 
         let request =
@@ -528,6 +521,7 @@ impl<'a> HapticV0Protocol<'a> {
             )));
         }
 
+        // Delegate marshalling and checking to a message type
         let message = match HapticV0Message::new(timer_mode_block, actuator_mode_blocks, op_mode_block) {
             Ok(message) => {
                 message
@@ -535,25 +529,33 @@ impl<'a> HapticV0Protocol<'a> {
             Err(error) => return Err(error)
         };
 
-        let prot_data = message.marshalled();
+        // Construct the protocol's payload
+        let mut prot_data = message.marshalled();
+
+        // While not a part of the protocol, the protocol data must be written in blocks of 4
+        while prot_data.len() % 4 != 0 {
+            prot_data.push(0);
+        }
 
         // Construct the feig command
         let control_byte = 0xB0; // Control Byte for manipulating transponder
         let command_id = 0x24; // Command Id for Control Byte to write blocks to transponder's RF blocks
         let mode = 0x01; // addressed
-        let db_n = 0x01;
-        let db_size = 0x04;
-        let addr = 0x00;
+        let db_size = 0x04 as u8; // number of bytes per block
+        let db_n = (prot_data.len() / (db_size as usize)) as u8; // number of blocks
+        let addr = 0x00; // our devices are expecting writes to 0x00
         let mut feig_data: Vec<u8> = vec![
             control_byte,
             command_id,
             mode,
-            db_n, // compute
+            db_n, 
             db_size,
             addr,
         ];
         feig_data.extend(uid);
         feig_data.extend(prot_data);
+        
+        log::trace!("Issuing command to reader: {}", hex::encode(&feig_data));
 
         match self.custom_command(control_byte, &feig_data[..], true) {
             Ok(_) => Ok(()),
@@ -686,9 +688,35 @@ impl HapticV0Message {
 
         match op_mode_block.cmd_op {
             0 => {
+                // Update timers. Timer values will be stored in memory
                 log::trace!("Creating timer command for {:?}", msg);
                 let timing_data = msg.get_timing_data(true, timer_mode_block);
+                msg.data.extend(timing_data); 
+            },
+            1 => {
+                // One-byte command, no need for extra configuration. Stored presets
+                log::trace!("Creating preset command for {:?}", msg);
+                let timing_data = msg.get_timing_data(true, timer_mode_block);
+                msg.data.extend(timing_data);
+            },
+            2 => {
+                // Command for actuators without configuration
+                log::trace!("Creating actuators w/o config command for {:?}", msg);
+                let timing_data = msg.get_timing_data(true, timer_mode_block);
+                if timing_data.len() > 0 {
+                    log::trace!("Ignoring timing data that would be sent for config change");
+                }
 
+                let actuators_data = msg.get_actuators_data(actuator_mode_blocks);
+                msg.data.extend(actuators_data);
+            },
+            3 => {
+                log::trace!("Creating actuators w/ config command for {:?}", msg);
+                let timing_data = msg.get_timing_data(true, timer_mode_block);
+                msg.data.extend(timing_data);
+
+                let actuators_data = msg.get_actuators_data(actuator_mode_blocks);
+                msg.data.extend(actuators_data);
             },
             _ => {
                 log::error!("Unhandled haptic v0 actuators command type for {:?}", msg);
@@ -789,7 +817,44 @@ impl HapticV0Message {
         }
     }
 
-    pub fn marshalled(&self) -> Vec<u8> {
-        vec![]
+    fn get_actuators_data(&self, actuator_mode_blocks: &Option<ActuatorModeBlocks>) -> Vec<u8> {
+        let blks = match actuator_mode_blocks {
+            Some(blks) => blks,
+            None => return vec![]
+        };
+
+        let mut data: Vec<u8> = Vec::with_capacity(32);
+        self.append_blk(&mut data, &blks.block224_255, 7);
+        self.append_blk(&mut data, &blks.block192_223, 6);
+        self.append_blk(&mut data, &blks.block160_191, 5);
+        self.append_blk(&mut data, &blks.block128_159, 4);
+        self.append_blk(&mut data, &blks.block96_127, 3);
+        self.append_blk(&mut data, &blks.block64_95, 2);
+        self.append_blk(&mut data, &blks.block32_63, 1);
+        self.append_blk(&mut data, &blks.block0_31, 0);
+
+        log::trace!("Prepared actuator config: {}", hex::encode(&data));
+
+        data
+    }
+
+    fn append_blk(&self, data: &mut Vec<u8>, blk: &Option<ActuatorModeBlock>, blk_index: usize) {
+        if let Some(ref blk) = blk {
+            while data.len() < ((blk_index + 1) * 4) {
+                data.push(0);
+            }
+
+            data[(blk_index * 4) + 0] = blk.b0;
+            data[(blk_index * 4) + 1] = blk.b1;
+            data[(blk_index * 4) + 2] = blk.b2;
+            data[(blk_index * 4) + 3] = blk.b3;
+        }
+    }
+
+    fn marshalled(&self) -> Vec<u8> {
+        let mut packed = vec![0, self.op_mode, self.command];
+        packed.extend(&self.data[..]);
+        packed[0] = packed.len() as u8;
+        packed
     }
 }
