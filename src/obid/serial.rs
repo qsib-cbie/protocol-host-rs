@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-
 pub trait ObidSerialSendable {
     fn serialize(self: &mut Self) -> std::vec::Vec<u8>
     where
