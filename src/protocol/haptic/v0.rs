@@ -45,12 +45,12 @@ pub struct ActuatorModeBlocks {
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub struct TimerModeBlock {
-    pub t_pulse: u8,
-    pub t_pause: u8,
-    pub ton_high: u8,
-    pub tperiod_high: u8,
-    pub ton_low: u8,
-    pub tperiod_low: u8,
+    pub t_pulse: u16,
+    pub t_pause: u16,
+    pub ton_high: u16,
+    pub tperiod_high: u16,
+    pub ton_low: u16,
+    pub tperiod_low: u16,
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ActuatorsCommand {
@@ -181,7 +181,7 @@ impl V0FabricState {
                 block64_95: curr_actuator_blocks.block64_95.clone(),
                 block96_127: curr_actuator_blocks.block96_127.clone(),
             }),
-            timer_mode_block: new_state.timer_mode_block,
+            timer_mode_block: diff.timer_mode_block,
             use_cache: Some(true), // Use the cache once the cache starts applying on top of its own state
         };
     }
@@ -528,6 +528,15 @@ impl<'a> HapticV0Protocol<'a> {
             )));
         }
 
+        let message = match HapticV0Message::new(timer_mode_block, actuator_mode_blocks, op_mode_block) {
+            Ok(message) => {
+                message
+            },
+            Err(error) => return Err(error)
+        };
+
+        let prot_data = message.marshalled();
+
         // Construct the feig command
         let control_byte = 0xB0; // Control Byte for manipulating transponder
         let command_id = 0x24; // Command Id for Control Byte to write blocks to transponder's RF blocks
@@ -535,223 +544,18 @@ impl<'a> HapticV0Protocol<'a> {
         let db_n = 0x01;
         let db_size = 0x04;
         let addr = 0x00;
-        let mut write_blocks = false;
-
-        let mut data: smallvec::SmallVec<[u8; 32]> = smallvec::smallvec![
-            command_id, mode, uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6], uid[7], addr,
-            db_n, db_size
+        let mut feig_data: Vec<u8> = vec![
+            control_byte,
+            command_id,
+            mode,
+            db_n, // compute
+            db_size,
+            addr,
         ];
-        let mut num_bytes = 3;
-        let mut cmd_op;
-        let mut act_cnt8;
-        let mut is_actuators = false;
-        let mut mem_blk1 = vec![0, 0];
-        let mut mem_blk2: Vec<u8> = vec![];
-        let mut mem_blk3: Vec<u8> = vec![];
+        feig_data.extend(uid);
+        feig_data.extend(prot_data);
 
-        let command;
-        if op_mode_block.is_some() {
-            let bl = op_mode_block.as_ref().unwrap();
-            log::debug!(
-                "Num act blks: {:#?}, cmd_op: {:#?}, command: {:#?} ",
-                bl.act_cnt8,
-                bl.cmd_op,
-                bl.command
-            );
-            command = bl.command;
-            cmd_op = bl.cmd_op;
-            act_cnt8 = bl.act_cnt8;
-            if command != 0 {
-                //Not all off command
-                if actuator_mode_blocks.is_some() && cmd_op != 0 {
-                    let bl = actuator_mode_blocks.as_ref().unwrap();
-                    let mut blks = vec![];
-                    if bl.block0_31.is_some() {
-                        mem_blk1.append(&mut vec![0, bl.block0_31.as_ref().unwrap().b0]);
-                        blks.extend(
-                            [
-                                bl.block0_31.as_ref().unwrap().b1,
-                                bl.block0_31.as_ref().unwrap().b2,
-                                bl.block0_31.as_ref().unwrap().b3,
-                            ]
-                            .iter()
-                            .copied(),
-                        );
-                    }
-                    if bl.block32_63.is_some() {
-                        blks.extend(
-                            [
-                                bl.block32_63.as_ref().unwrap().b0,
-                                bl.block32_63.as_ref().unwrap().b1,
-                                bl.block32_63.as_ref().unwrap().b2,
-                                bl.block32_63.as_ref().unwrap().b3,
-                            ]
-                            .iter()
-                            .copied(),
-                        );
-                    }
-                    if bl.block64_95.is_some() {
-                        blks.extend(
-                            [
-                                bl.block64_95.as_ref().unwrap().b0,
-                                bl.block64_95.as_ref().unwrap().b1,
-                                bl.block64_95.as_ref().unwrap().b2,
-                                bl.block64_95.as_ref().unwrap().b3,
-                            ]
-                            .iter()
-                            .copied(),
-                        );
-                    }
-                    if bl.block96_127.is_some() {
-                        blks.extend(
-                            [
-                                bl.block96_127.as_ref().unwrap().b0,
-                                bl.block96_127.as_ref().unwrap().b1,
-                                bl.block96_127.as_ref().unwrap().b2,
-                                bl.block96_127.as_ref().unwrap().b3,
-                            ]
-                            .iter()
-                            .copied(),
-                        );
-                    }
-                    if blks.len() != 0 {
-                        is_actuators = true;
-                        write_blocks = true;
-                        let mut last_int = 0;
-                        let mut cnt = 0;
-                        for blk in blks.iter_mut() {
-                            //find last relavant byte
-                            cnt += 1;
-                            if *blk != 0 {
-                                last_int = cnt;
-                            }
-                        }
-                        blks.truncate(last_int); //remove unneeded bytes (trailing zeros)
-                        for chunk in blks.chunks(db_size as usize) {
-                            //populate other memory blocks if possible
-                            if mem_blk2.len() == 0 {
-                                mem_blk2.extend(chunk)
-                            } else if mem_blk3.len() == 0 {
-                                mem_blk3.extend(chunk)
-                            }
-                        }
-                        act_cnt8 = 5; //1 + blks.len() as u8;
-                        cmd_op = 2; //Command without timing config. Overwritten if timing is added.
-                    } else {
-                        act_cnt8 = 0;
-                    }
-                }
-                if timer_mode_blocks.is_some() {
-                    let bl = timer_mode_blocks.as_ref().unwrap();
-                    let mut blks = vec![];
-                    if bl.single_pulse_block.is_some() {
-                        blks.extend(
-                            [
-                                bl.single_pulse_block.as_ref().unwrap().b0,
-                                bl.single_pulse_block.as_ref().unwrap().b1,
-                                bl.single_pulse_block.as_ref().unwrap().b2,
-                            ]
-                            .iter()
-                            .copied(),
-                        );
-                    }
-                    if bl.hf_block.is_some() {
-                        blks.extend(
-                            [
-                                bl.hf_block.as_ref().unwrap().b0,
-                                bl.hf_block.as_ref().unwrap().b1,
-                                bl.hf_block.as_ref().unwrap().b2,
-                            ]
-                            .iter()
-                            .copied(),
-                        );
-                    }
-                    if bl.lf_block.is_some() {
-                        blks.extend(
-                            [
-                                bl.lf_block.as_ref().unwrap().b0,
-                                bl.lf_block.as_ref().unwrap().b1,
-                                bl.lf_block.as_ref().unwrap().b2,
-                            ]
-                            .iter()
-                            .copied(),
-                        );
-                    }
-                    if blks.len() != 0 {
-                        write_blocks = true;
-                        if is_actuators {
-                            cmd_op = 3; //Actuator command with timing config
-                                        //Fill memory blocks with space
-                            while mem_blk2.len() < 4 && blks.len() != 0 {
-                                mem_blk2.push(blks.remove(0));
-                            }
-                            while mem_blk3.len() < 4 && blks.len() != 0 {
-                                mem_blk3.push(blks.remove(0));
-                            }
-                        } else {
-                            //Only setting timing blocks
-                            for _ in 0..2 {
-                                mem_blk1.push(blks.remove(0));
-                            } //push first two bytes into mem_blk1
-                            for chunk in blks.chunks(db_size as usize) {
-                                //populate other memory blocks if possible
-                                if mem_blk2.len() == 0 {
-                                    mem_blk2.extend(chunk)
-                                } else if mem_blk3.len() == 0 {
-                                    mem_blk3.extend(chunk)
-                                }
-                            }
-                        }
-                    }
-                }
-                while mem_blk2.len() > 0 && mem_blk2.len() < 4 {
-                    //Need to fill memory blocks if not full
-                    mem_blk2.push(0);
-                }
-                if mem_blk2.len() == 0 && is_actuators {
-                    mem_blk2 = vec![0, 0, 0, 0];
-                }
-                while mem_blk3.len() > 0 && mem_blk3.len() < 4 {
-                    mem_blk3.push(0);
-                }
-                let op_mode = cmd_op << 5 | act_cnt8;
-                mem_blk1[1] = op_mode;
-
-                if is_actuators {
-                    mem_blk1[2] = command;
-                } //command not used when only setting timing
-
-                num_bytes = mem_blk1.len() + mem_blk2.len() + mem_blk3.len();
-                mem_blk1[0] = num_bytes as u8;
-                data[11] = ((num_bytes as f32 / 4f32).ceil()) as u8; //calcuate number of memeory blocks to write to
-                mem_blk1.reverse();
-                mem_blk2.reverse();
-                mem_blk3.reverse();
-                data.extend_from_slice(mem_blk1.as_slice());
-                data.extend_from_slice(mem_blk2.as_slice());
-                data.extend_from_slice(mem_blk3.as_slice());
-            } else {
-                //all off
-                write_blocks = true;
-                act_cnt8 = bl.act_cnt8;
-                let op_mode = cmd_op << 5 | act_cnt8;
-                // LSB first
-                data.push(0x00); //first byte is empty when cmd_op is 1
-                data.push(command);
-                data.push(op_mode);
-                data.push(num_bytes as u8); //num_bytes
-            }
-        }
-
-        let message = match HapticV0Message::new(uid, timer_mode_block, actuator_mode_blocks, op_mode_block) {
-            Ok(message) => {
-                message
-            },
-            Err(error) => return Err(error)
-        };
-
-
-        match self.custom_command(control_byte, data.as_slice(), true) {
+        match self.custom_command(control_byte, &feig_data[..], true) {
             Ok(_) => Ok(()),
             Err(err) => {
                 log::error!("Failed to write actuators command: {}", err);
@@ -831,7 +635,7 @@ impl<'a> Protocol<'a> for HapticV0Protocol<'a> {
             }
             CommandMessage::ActuatorsCommand {
                 fabric_name,
-                timer_mode_blocks,
+                timer_mode_block,
                 actuator_mode_blocks,
                 op_mode_block,
                 use_cache,
@@ -839,13 +643,13 @@ impl<'a> Protocol<'a> for HapticV0Protocol<'a> {
                 log::trace!(
                     "Received ActuatorsCommand: {:#?} {:#?} {:#?} {:#?}",
                     fabric_name,
-                    timer_mode_blocks,
+                    timer_mode_block,
                     actuator_mode_blocks,
                     op_mode_block
                 );
                 self.handle_actuators_command(
                     fabric_name,
-                    timer_mode_blocks,
+                    timer_mode_block,
                     actuator_mode_blocks,
                     op_mode_block,
                     use_cache,
@@ -868,16 +672,9 @@ struct HapticV0Message {
 
 impl HapticV0Message {
     pub fn new(
-        uid: &[u8],
         timer_mode_block: &Option<TimerModeBlock>,
         actuator_mode_blocks: &Option<ActuatorModeBlocks>,
         op_mode_block: &Option<OpModeBlock>) -> Result<HapticV0Message> {
-        if uid.len() != 8 {
-            return Err(InternalError::from(format!(
-                "Expected UID, which is a serial number of 8 bytes, but found {} bytes",
-                uid.len()
-            )));
-        }
 
         // The protocol message header is the same for all message types
         let op_mode_block = op_mode_block.as_ref().unwrap_or(&OpModeBlock{act_cnt8: 5, cmd_op: 0x00, command: 0x00});
@@ -890,7 +687,8 @@ impl HapticV0Message {
         match op_mode_block.cmd_op {
             0 => {
                 log::trace!("Creating timer command for {:?}", msg);
-                msg.set_timing_data(timer_mode_block);
+                let timing_data = msg.get_timing_data(true, timer_mode_block);
+
             },
             _ => {
                 log::error!("Unhandled haptic v0 actuators command type for {:?}", msg);
@@ -900,88 +698,87 @@ impl HapticV0Message {
         Ok(msg)
     }
 
-    fn set_timing_data(&mut self, timer_mode_blocks: &Option<TimerModeBlocks>) -> Vec<u8> {
-        match timer_mode_blocks {
+    fn get_timing_data(&mut self, all: bool, timer_mode_block: &Option<TimerModeBlock>) -> Vec<u8> {
+        if all {
+            if let Some(blk) = timer_mode_block {
+                return vec![
+                    ((blk.t_pulse & 0xff0u16) >> 4) as u8,
+                    (((blk.t_pulse & 0x00fu16) << 4) as u8) |
+                        (((blk.t_pause & 0xf00u16) >> 8) as u8),
+                    (blk.t_pause & 0x0ffu16) as u8,
+                    ((blk.ton_high & 0xff0u16) >> 4) as u8,
+                    (((blk.ton_high & 0x00fu16) << 4) as u8) | 
+                        (((blk.tperiod_high & 0xf00u16) >> 8) as u8),
+                    (blk.tperiod_high & 0x0ffu16) as u8,
+                    ((blk.ton_low & 0xff0u16) >> 4) as u8,
+                    (((blk.ton_low & 0x00fu16) << 4) as u8) | 
+                        (((blk.tperiod_low & 0xf00u16) >> 8) as u8),
+                    (blk.tperiod_low & 0x0ffu16) as u8
+                ]
+            } else {
+                log::warn!("Requesting all timing data config without timer mode block defaults to empty data");
+                return vec![]
+            }
+        }
+
+        match timer_mode_block {
             Some(blk) => {
                 match self.command {
                     1 => {
                         // No need for timing
-                        log::error!("Turn ON COMMAND = 0x01, timing config missing");
-                        vec![0; 3]
+                        vec![]
                     },
                     2 => {
                         // Needs high frequency signal timing values
-                        match &blk.hf_block {
-                            Some(hf_blk) => vec![
-                                hf_blk.b0,
-                                hf_blk.b1,
-                                hf_blk.b2,
-                            ],
-                            None => {
-                                log::error!("Turn ON, pulsing COMMAND = 0x02, timing config missing");
-                                vec![0; 3]
-                            }
-                        }
+                        vec![
+                            ((blk.ton_high & 0xff0u16) >> 4) as u8,
+                            (((blk.ton_high & 0x00fu16) << 4) as u8) | 
+                                (((blk.tperiod_high & 0xf00u16) >> 8) as u8),
+                            (blk.tperiod_high & 0x0ffu16) as u8,
+                        ]
                     },
                     3 => {
                         // Needs high frequency signal and low frequency signal timing values
-                        let mut hf_data = match &blk.hf_block {
-                            Some(hf_blk) => vec![
-                                hf_blk.b0,
-                                hf_blk.b1,
-                                hf_blk.b2,
-                            ],
-                            None => {
-                                log::error!("Turn ON, pulsing with AM COMMAND = 0x03, timing config missing");
-                                vec![0; 3]
-                            }
-                        };
-
-                        let lf_data = match &blk.lf_block {
-                            Some(lf_blk) => vec![
-                                lf_blk.b0,
-                                lf_blk.b1,
-                                lf_blk.b2,
-                            ],
-                            None => {
-                                log::error!("Turn ON, pulsing with AM COMMAND = 0x03, timing config missing");
-                                vec![0; 3]
-                            }
-                        };
-
-                        hf_data.extend(lf_data);
-                        hf_data
+                        vec![
+                            ((blk.ton_high & 0xff0u16) >> 4) as u8,
+                            (((blk.ton_high & 0x00fu16) << 4) as u8) | 
+                                (((blk.tperiod_high & 0xf00u16) >> 8) as u8),
+                            (blk.tperiod_high & 0x0ffu16) as u8,
+                            ((blk.ton_low & 0xff0u16) >> 4) as u8,
+                            (((blk.ton_low & 0x00fu16) << 4) as u8) | 
+                                (((blk.tperiod_low & 0xf00u16) >> 8) as u8),
+                            (blk.tperiod_low & 0x0ffu16) as u8
+                        ]
                     },
                     4 => {
                         // Needs t_pulse
-                        log::error!("Turn ON COMMAND = 0x04, timing config missing");
-                        vec![0; 3]
+                        vec![
+                            ((blk.t_pulse & 0xff0u16) >> 4) as u8,
+                            ((blk.t_pulse & 0x00fu16) << 4) as u8,
+                        ]
                     },
                     5 => {
                         // Needs t_pulse and high frequency signal timing values
-                        let mut hf_data = match &blk.hf_block {
-                            Some(hf_blk) => vec![
-                                hf_blk.b0,
-                                hf_blk.b1,
-                                hf_blk.b2,
-                            ],
-                            None => {
-                                log::error!("Turn ON, pulsing COMMAND = 0x05, timing config missing");
-                                vec![0; 3]
-                            }
-                        };
-
-                        log::error!("Turn ON, pulsing COMMAND = 0x05, timing config missing");
-                        hf_data
+                        vec![
+                            ((blk.t_pulse & 0xff0u16) >> 4) as u8,
+                            (((blk.t_pulse & 0x00fu16) << 4) as u8) |
+                                (((blk.ton_high & 0xf00u16) >> 8) as u8),
+                            (blk.ton_high & 0x0ffu16) as u8,
+                            (((blk.tperiod_high & 0xff0u16) >> 4) as u8),
+                            (((blk.tperiod_high & 0x00fu16) << 4) as u8),
+                        ]
                     },
                     0x86..=0x8F => {
                         // Needs t_pulse and t_pause
-                        log::error!("Sweep Presets COMMAND = 0x86-0x8F ({}), timing config missing", self.command);
-                        vec![0; 3]
+                        vec![
+                            ((blk.t_pulse & 0xff0u16) >> 4) as u8,
+                            (((blk.t_pulse & 0x00fu16) << 4) as u8) |
+                                (((blk.t_pause & 0xf00u16) >> 8) as u8),
+                            (blk.t_pause & 0x0ffu16) as u8,
+                        ]
                     },
                     _ => {
-                        log::error!("Don't know how to configure timing block for command {} correctly", self.command);
-                        vec![0; 3]
+                        vec![]
                     }
                 }
             },
@@ -990,5 +787,9 @@ impl HapticV0Message {
                 vec![0; 3]
             }
         }
+    }
+
+    pub fn marshalled(&self) -> Vec<u8> {
+        vec![]
     }
 }

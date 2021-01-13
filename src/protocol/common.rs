@@ -34,7 +34,7 @@ pub enum CommandMessage {
     },
     ActuatorsCommand {
         fabric_name: String,
-        timer_mode_block: Option<haptic::v0::TimerModeBlocks>,
+        timer_mode_block: Option<haptic::v0::TimerModeBlock>,
         actuator_mode_blocks: Option<haptic::v0::ActuatorModeBlocks>,
         op_mode_block: Option<haptic::v0::OpModeBlock>,
         use_cache: Option<bool>,
