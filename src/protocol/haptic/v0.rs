@@ -45,24 +45,19 @@ pub struct ActuatorModeBlocks {
 
 #[derive(PartialEq, Clone, Serialize, Deserialize, Debug)]
 pub struct TimerModeBlock {
-    pub b0: u8,
-    pub b1: u8,
-    pub b2: u8,
+    pub t_pulse: u8,
+    pub t_pause: u8,
+    pub ton_high: u8,
+    pub tperiod_high: u8,
+    pub ton_low: u8,
+    pub tperiod_low: u8,
 }
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct TimerModeBlocks {
-    pub single_pulse_block: Option<TimerModeBlock>,
-    pub hf_block: Option<TimerModeBlock>,
-    pub lf_block: Option<TimerModeBlock>,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ActuatorsCommand {
     pub fabric_name: String,
     pub op_mode_block: Option<OpModeBlock>,
     pub actuator_mode_blocks: Option<ActuatorModeBlocks>,
-    pub timer_mode_blocks: Option<TimerModeBlocks>,
+    pub timer_mode_block: Option<TimerModeBlock>,
     pub use_cache: Option<bool>,
 }
 
@@ -106,22 +101,13 @@ impl V0FabricState {
                         b3: 0,
                     }),
                 }),
-                timer_mode_blocks: Some(TimerModeBlocks {
-                    single_pulse_block: Some(TimerModeBlock {
-                        b0: 0,
-                        b1: 0,
-                        b2: 0,
-                    }),
-                    hf_block: Some(TimerModeBlock {
-                        b0: 0,
-                        b1: 0,
-                        b2: 0,
-                    }),
-                    lf_block: Some(TimerModeBlock {
-                        b0: 0,
-                        b1: 0,
-                        b2: 0,
-                    }),
+                timer_mode_block: Some(TimerModeBlock {
+                    t_pulse: 0,
+                    t_pause: 0,
+                    ton_high: 0,
+                    tperiod_high: 0,
+                    ton_low: 0,
+                    tperiod_low: 0,
                 }),
                 use_cache: Some(false),
             },
@@ -135,10 +121,8 @@ impl V0FabricState {
             .unwrap_or(self.state.actuator_mode_blocks.clone().unwrap());
         let curr_actuator_blocks = self.state.actuator_mode_blocks.as_ref().unwrap();
 
-        let new_timer_blocks = &new_state
-            .timer_mode_blocks
-            .unwrap_or(self.state.timer_mode_blocks.clone().unwrap());
-        let curr_timer_blocks = self.state.timer_mode_blocks.as_ref().unwrap();
+        let new_timer_block = &new_state.timer_mode_block;
+        let curr_timer_block = &self.state.timer_mode_block;
 
         ActuatorsCommand {
             fabric_name: self.state.fabric_name.clone(),
@@ -173,29 +157,11 @@ impl V0FabricState {
                     None
                 },
             }),
-            timer_mode_blocks: Some(TimerModeBlocks {
-                single_pulse_block: if new_timer_blocks.single_pulse_block.is_some()
-                    && curr_timer_blocks.single_pulse_block != new_timer_blocks.single_pulse_block
-                {
-                    new_timer_blocks.single_pulse_block.clone()
-                } else {
-                    None
-                },
-                hf_block: if new_timer_blocks.hf_block.is_some()
-                    && curr_timer_blocks.hf_block != new_timer_blocks.hf_block
-                {
-                    new_timer_blocks.hf_block.clone()
-                } else {
-                    None
-                },
-                lf_block: if new_timer_blocks.lf_block.is_some()
-                    && curr_timer_blocks.lf_block != new_timer_blocks.lf_block
-                {
-                    new_timer_blocks.lf_block.clone()
-                } else {
-                    None
-                },
-            }),
+            timer_mode_block: if curr_timer_block != new_timer_block {
+                new_timer_block.clone()
+            } else {
+                None
+            },
             use_cache: self.state.use_cache,
         }
     }
@@ -206,11 +172,6 @@ impl V0FabricState {
 
         let curr_actuator_blocks = self.state.actuator_mode_blocks.as_ref().unwrap();
 
-        let new_timer_blocks = &diff
-            .timer_mode_blocks
-            .unwrap_or(self.state.timer_mode_blocks.clone().unwrap());
-        let curr_timer_blocks = self.state.timer_mode_blocks.as_ref().unwrap();
-
         self.state = ActuatorsCommand {
             fabric_name: self.state.fabric_name.clone(),
             op_mode_block: diff.op_mode_block,
@@ -220,23 +181,7 @@ impl V0FabricState {
                 block64_95: curr_actuator_blocks.block64_95.clone(),
                 block96_127: curr_actuator_blocks.block96_127.clone(),
             }),
-            timer_mode_blocks: Some(TimerModeBlocks {
-                single_pulse_block: if new_timer_blocks.single_pulse_block.is_some() {
-                    new_timer_blocks.single_pulse_block.clone()
-                } else {
-                    curr_timer_blocks.single_pulse_block.clone()
-                },
-                hf_block: if new_timer_blocks.hf_block.is_some() {
-                    new_timer_blocks.hf_block.clone()
-                } else {
-                    curr_timer_blocks.hf_block.clone()
-                },
-                lf_block: if new_timer_blocks.lf_block.is_some() {
-                    new_timer_blocks.lf_block.clone()
-                } else {
-                    curr_timer_blocks.lf_block.clone()
-                },
-            }),
+            timer_mode_block: new_state.timer_mode_block,
             use_cache: Some(true), // Use the cache once the cache starts applying on top of its own state
         };
     }
@@ -487,7 +432,7 @@ impl<'a> HapticV0Protocol<'a> {
     fn handle_actuators_command(
         self: &mut Self,
         fabric_name: &String,
-        timer_mode_blocks: &Option<TimerModeBlocks>,
+        timer_mode_block: &Option<TimerModeBlock>,
         actuator_mode_blocks: &Option<ActuatorModeBlocks>,
         op_mode_block: &Option<OpModeBlock>,
         use_cache: &Option<bool>,
@@ -520,7 +465,7 @@ impl<'a> HapticV0Protocol<'a> {
         let fabric_id = fabric.identifier()?;
         let mut actuators_command = ActuatorsCommand {
             fabric_name: fabric_name.clone(),
-            timer_mode_blocks: timer_mode_blocks.clone(),
+            timer_mode_block: timer_mode_block.clone(),
             actuator_mode_blocks: actuator_mode_blocks.clone(),
             op_mode_block: op_mode_block.clone(),
             use_cache: use_cache.clone(),
@@ -553,7 +498,7 @@ impl<'a> HapticV0Protocol<'a> {
 
         let result = self.actuators_command(
             fabric_id.as_slice(),
-            &actuators_command.timer_mode_blocks,
+            &actuators_command.timer_mode_block,
             &actuators_command.actuator_mode_blocks,
             &actuators_command.op_mode_block,
         );
@@ -570,7 +515,7 @@ impl<'a> HapticV0Protocol<'a> {
     pub fn actuators_command(
         self: &mut Self,
         uid: &[u8],
-        timer_mode_blocks: &Option<TimerModeBlocks>,
+        timer_mode_block: &Option<TimerModeBlock>,
         actuator_mode_blocks: &Option<ActuatorModeBlocks>,
         op_mode_block: &Option<OpModeBlock>,
     ) -> Result<()> {
@@ -797,16 +742,22 @@ impl<'a> HapticV0Protocol<'a> {
                 data.push(num_bytes as u8); //num_bytes
             }
         }
-        if write_blocks {
-            match self.custom_command(control_byte, data.as_slice(), true) {
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!("Failed to write actuators command: {}", err);
-                    return Err(err);
-                }
+
+        let message = match HapticV0Message::new(uid, timer_mode_block, actuator_mode_blocks, op_mode_block) {
+            Ok(message) => {
+                message
+            },
+            Err(error) => return Err(error)
+        };
+
+
+        match self.custom_command(control_byte, data.as_slice(), true) {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                log::error!("Failed to write actuators command: {}", err);
+                Err(err)
             }
         }
-        Ok(())
     }
 }
 
@@ -903,6 +854,140 @@ impl<'a> Protocol<'a> for HapticV0Protocol<'a> {
             _ => {
                 log::debug!("Haptic V0 ignoring: {:?}", message);
                 Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct HapticV0Message {
+    op_mode: u8,
+    command: u8,
+    data: Vec<u8>
+}
+
+impl HapticV0Message {
+    pub fn new(
+        uid: &[u8],
+        timer_mode_block: &Option<TimerModeBlock>,
+        actuator_mode_blocks: &Option<ActuatorModeBlocks>,
+        op_mode_block: &Option<OpModeBlock>) -> Result<HapticV0Message> {
+        if uid.len() != 8 {
+            return Err(InternalError::from(format!(
+                "Expected UID, which is a serial number of 8 bytes, but found {} bytes",
+                uid.len()
+            )));
+        }
+
+        // The protocol message header is the same for all message types
+        let op_mode_block = op_mode_block.as_ref().unwrap_or(&OpModeBlock{act_cnt8: 5, cmd_op: 0x00, command: 0x00});
+        let mut msg = HapticV0Message {
+            op_mode: (op_mode_block.cmd_op) << 5 | (op_mode_block.act_cnt8 & 0b00011111),
+            command: op_mode_block.command,
+            data: vec![]
+        };
+
+        match op_mode_block.cmd_op {
+            0 => {
+                log::trace!("Creating timer command for {:?}", msg);
+                msg.set_timing_data(timer_mode_block);
+            },
+            _ => {
+                log::error!("Unhandled haptic v0 actuators command type for {:?}", msg);
+            }
+        }
+
+        Ok(msg)
+    }
+
+    fn set_timing_data(&mut self, timer_mode_blocks: &Option<TimerModeBlocks>) -> Vec<u8> {
+        match timer_mode_blocks {
+            Some(blk) => {
+                match self.command {
+                    1 => {
+                        // No need for timing
+                        log::error!("Turn ON COMMAND = 0x01, timing config missing");
+                        vec![0; 3]
+                    },
+                    2 => {
+                        // Needs high frequency signal timing values
+                        match &blk.hf_block {
+                            Some(hf_blk) => vec![
+                                hf_blk.b0,
+                                hf_blk.b1,
+                                hf_blk.b2,
+                            ],
+                            None => {
+                                log::error!("Turn ON, pulsing COMMAND = 0x02, timing config missing");
+                                vec![0; 3]
+                            }
+                        }
+                    },
+                    3 => {
+                        // Needs high frequency signal and low frequency signal timing values
+                        let mut hf_data = match &blk.hf_block {
+                            Some(hf_blk) => vec![
+                                hf_blk.b0,
+                                hf_blk.b1,
+                                hf_blk.b2,
+                            ],
+                            None => {
+                                log::error!("Turn ON, pulsing with AM COMMAND = 0x03, timing config missing");
+                                vec![0; 3]
+                            }
+                        };
+
+                        let lf_data = match &blk.lf_block {
+                            Some(lf_blk) => vec![
+                                lf_blk.b0,
+                                lf_blk.b1,
+                                lf_blk.b2,
+                            ],
+                            None => {
+                                log::error!("Turn ON, pulsing with AM COMMAND = 0x03, timing config missing");
+                                vec![0; 3]
+                            }
+                        };
+
+                        hf_data.extend(lf_data);
+                        hf_data
+                    },
+                    4 => {
+                        // Needs t_pulse
+                        log::error!("Turn ON COMMAND = 0x04, timing config missing");
+                        vec![0; 3]
+                    },
+                    5 => {
+                        // Needs t_pulse and high frequency signal timing values
+                        let mut hf_data = match &blk.hf_block {
+                            Some(hf_blk) => vec![
+                                hf_blk.b0,
+                                hf_blk.b1,
+                                hf_blk.b2,
+                            ],
+                            None => {
+                                log::error!("Turn ON, pulsing COMMAND = 0x05, timing config missing");
+                                vec![0; 3]
+                            }
+                        };
+
+                        log::error!("Turn ON, pulsing COMMAND = 0x05, timing config missing");
+                        hf_data
+                    },
+                    0x86..=0x8F => {
+                        // Needs t_pulse and t_pause
+                        log::error!("Sweep Presets COMMAND = 0x86-0x8F ({}), timing config missing", self.command);
+                        vec![0; 3]
+                    },
+                    _ => {
+                        log::error!("Don't know how to configure timing block for command {} correctly", self.command);
+                        vec![0; 3]
+                    }
+                }
+            },
+            None => {
+                log::error!("Don't know how to configure timing block without timing block");
+                vec![0; 3]
             }
         }
     }
